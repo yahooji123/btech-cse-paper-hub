@@ -47,6 +47,7 @@ router.get("/:id/download", async (req, res, next) => {
     if (!fileResponse.ok || !fileResponse.body) {
       return res.status(502).json({ message: "The paper file could not be downloaded from storage." });
     }
+    await Paper.updateOne({ _id: paper._id }, { $inc: { downloadCount: 1 } });
 
     const fallbackName = `${paper.title}.${paper.fileType === "pdf" ? "pdf" : "jpg"}`;
     const filename = (paper.originalName || fallbackName).replace(/[\r\n"]/g, "_");

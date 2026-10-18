@@ -15,6 +15,7 @@ const paperSchema = new mongoose.Schema(
     originalName: { type: String, required: true },
     mimeType: { type: String, required: true },
     bytes: { type: Number, default: 0 },
+    downloadCount: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true }
 );
