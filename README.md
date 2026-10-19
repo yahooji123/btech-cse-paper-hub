@@ -5,6 +5,7 @@ A full-stack question-paper library built with React + Vite, Node.js + Express, 
 ## Features
 - Students can browse/search papers without registering or logging in.
 - Filter by semester, subject, exam type (MTE/ETE), academic year, and file type.
+- Store one paper for multiple semesters and use a four-digit academic year such as `2025`.
 - Preview PDFs and images inside the website.
 - Download links are available, but downloading is not required to view files.
 - Admin can upload, edit metadata, and delete papers.

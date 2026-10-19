@@ -24,6 +24,20 @@ const upload = multer({
   },
 });
 
+function parseSemesters(value) {
+  let values = value;
+  if (typeof value === "string") {
+    try { values = JSON.parse(value); } catch { values = value.split(","); }
+  }
+  if (!Array.isArray(values)) values = [values];
+  const semesters = [...new Set(values.map(Number))];
+  return semesters.length > 0 && semesters.every(number => Number.isInteger(number) && number >= 1 && number <= 8) ? semesters.sort((a, b) => a - b) : null;
+}
+
+function validateAcademicYear(value) {
+  return typeof value === "string" && /^\d{4}$/.test(value.trim());
+}
+
 router.post("/unlock", loginLimiter, (req, res) => {
   const { password } = req.body || {};
   const expected = process.env.ADMIN_PASSWORD;
@@ -50,13 +64,14 @@ function uploadBuffer(buffer, options) {
 router.post("/papers", requireAdmin, upload.single("file"), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ message: "Choose a PDF or image file." });
-    const { title, semester, subject, subjectCode, examType, academicYear } = req.body;
+    const { title, subject, subjectCode, examType, academicYear } = req.body;
     if (!title?.trim() || !subject?.trim() || !academicYear?.trim()) {
       return res.status(400).json({ message: "Title, subject, and academic year are required." });
     }
-    const sem = Number(semester);
-    if (!Number.isInteger(sem) || sem < 1 || sem > 8) return res.status(400).json({ message: "Semester must be between 1 and 8." });
+    const semesters = parseSemesters(req.body.semesters ?? req.body.semester);
+    if (!semesters) return res.status(400).json({ message: "Select at least one semester between 1 and 8." });
     if (!["MTE", "ETE"].includes(examType)) return res.status(400).json({ message: "Exam type must be MTE or ETE." });
+    if (!validateAcademicYear(academicYear)) return res.status(400).json({ message: "Academic year must be a four-digit year, like 2025." });
 
     const isPdf = req.file.mimetype === "application/pdf";
     const result = await uploadBuffer(req.file.buffer, {
@@ -70,7 +85,8 @@ router.post("/papers", requireAdmin, upload.single("file"), async (req, res, nex
 
     const paper = await Paper.create({
       title: title.trim(),
-      semester: sem,
+      semester: semesters[0],
+      semesters,
       subject: subject.trim(),
       subjectCode: (subjectCode || "").trim(),
       examType,
@@ -89,14 +105,20 @@ router.post("/papers", requireAdmin, upload.single("file"), async (req, res, nex
 
 router.patch("/papers/:id", requireAdmin, async (req, res, next) => {
   try {
-    const allowed = ["title", "semester", "subject", "subjectCode", "examType", "academicYear"];
+    const allowed = ["title", "semesters", "semester", "subject", "subjectCode", "examType", "academicYear"];
     const updates = {};
     for (const key of allowed) if (req.body[key] !== undefined) updates[key] = req.body[key];
-    if (updates.semester !== undefined) {
-      updates.semester = Number(updates.semester);
-      if (!Number.isInteger(updates.semester) || updates.semester < 1 || updates.semester > 8) return res.status(400).json({ message: "Semester must be between 1 and 8." });
+    if (updates.semesters !== undefined || updates.semester !== undefined) {
+      const semesters = parseSemesters(updates.semesters ?? updates.semester);
+      if (!semesters) return res.status(400).json({ message: "Select at least one semester between 1 and 8." });
+      updates.semesters = semesters;
+      updates.semester = semesters[0];
     }
     if (updates.examType !== undefined && !["MTE", "ETE"].includes(updates.examType)) return res.status(400).json({ message: "Exam type must be MTE or ETE." });
+    if (updates.academicYear !== undefined) {
+      if (!validateAcademicYear(updates.academicYear)) return res.status(400).json({ message: "Academic year must be a four-digit year, like 2025." });
+      updates.academicYear = updates.academicYear.trim();
+    }
     const paper = await Paper.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
     if (!paper) return res.status(404).json({ message: "Paper not found." });
     res.json({ paper });

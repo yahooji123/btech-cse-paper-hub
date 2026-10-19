@@ -4,36 +4,47 @@ import Paper from "../models/Paper.js";
 
 const router = Router();
 
+function normalizePaper(paper) {
+  const semesters = paper.semesters?.length ? paper.semesters : [paper.semester];
+  return { ...paper, semesters, semester: semesters[0] };
+}
+
 router.get("/", async (req, res, next) => {
   try {
     const { semester, examType, academicYear, fileType, q } = req.query;
     const filter = {};
-    if (semester && Number.isInteger(Number(semester)) && Number(semester) >= 1 && Number(semester) <= 8) filter.semester = Number(semester);
+    if (semester && Number.isInteger(Number(semester)) && Number(semester) >= 1 && Number(semester) <= 8) {
+      const selectedSemester = Number(semester);
+      filter.$and = [{ $or: [{ semesters: selectedSemester }, { semester: selectedSemester }] }];
+    }
     if (["MTE", "ETE"].includes(examType)) filter.examType = examType;
     if (academicYear) filter.academicYear = String(academicYear).slice(0, 20);
     if (["pdf", "image"].includes(fileType)) filter.fileType = fileType;
     if (q && String(q).trim()) {
       const term = String(q).trim().slice(0, 80);
-      filter.$or = [
+      const searchFilter = { $or: [
         { title: { $regex: term, $options: "i" } },
         { subject: { $regex: term, $options: "i" } },
         { subjectCode: { $regex: term, $options: "i" } },
-      ];
+      ] };
+      filter.$and = [...(filter.$and || []), searchFilter];
     }
     const papers = await Paper.find(filter).sort({ semester: 1, academicYear: -1, createdAt: -1 }).limit(300).lean();
-    res.json({ papers });
+    res.json({ papers: papers.map(normalizePaper) });
   } catch (err) { next(err); }
 });
 
 router.get("/meta", async (_req, res, next) => {
   try {
-    const [semesters, years, subjects, total] = await Promise.all([
+    const [semesters, legacySemesters, years, subjects, total] = await Promise.all([
       Paper.distinct("semester"),
+      Paper.distinct("semesters"),
       Paper.distinct("academicYear"),
       Paper.distinct("subject"),
       Paper.countDocuments(),
     ]);
-    res.json({ semesters: semesters.sort((a,b)=>a-b), years: years.sort().reverse(), subjects: subjects.sort(), total });
+    const allSemesters = [...new Set([...semesters, ...legacySemesters].filter(Number.isInteger))];
+    res.json({ semesters: allSemesters.sort((a,b)=>a-b), years: years.sort().reverse(), subjects: subjects.sort(), total });
   } catch (err) { next(err); }
 });
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BookOpen, Search, Download, Eye, ShieldCheck, UploadCloud, X, FileText, Image as ImageIcon, Trash2, Pencil, GraduationCap, Filter, LockKeyhole, RefreshCw, ExternalLink } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/$/, "");
-const emptyForm = { title: "", semester: "1", subject: "", subjectCode: "", examType: "MTE", academicYear: "2025-2026" };
+const emptyForm = { title: "", semesters: ["1"], subject: "", subjectCode: "", examType: "MTE", academicYear: "2025" };
 
 async function request(path, options = {}) {
   const response = await fetch(`${API}${path}`, options);
@@ -23,7 +23,7 @@ function PreviewModal({ paper, onClose }) {
   }, [onClose]);
   return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}>
     <section className="preview-modal" role="dialog" aria-modal="true" aria-label={`Preview ${paper.title}`}>
-      <header className="modal-head"><div><span className="eyebrow">PAPER PREVIEW</span><h2>{paper.title}</h2><p>{paper.subject} · Semester {paper.semester} · {paper.examType} · {paper.academicYear}</p></div><button className="icon-btn" onClick={onClose} aria-label="Close preview"><X /></button></header>
+      <header className="modal-head"><div><span className="eyebrow">PAPER PREVIEW</span><h2>{paper.title}</h2>      <p>{paper.subject} · Semester {paper.semesters?.join(", ") || paper.semester} · {paper.examType} · {paper.academicYear}</p></div><button className="icon-btn" onClick={onClose} aria-label="Close preview"><X /></button></header>
       <div className="preview-body">
         {paper.fileType === "image" ? <img className="preview-image" src={paper.fileUrl} alt={paper.title} /> :
           <iframe className="pdf-frame" title={paper.title} src={paper.fileUrl} />}
@@ -76,7 +76,7 @@ function AdminPanel({ onClose, onChanged }) {
   }
   function editPaper(p) {
     setEditing(p._id);
-    setForm({ title:p.title, semester:String(p.semester), subject:p.subject, subjectCode:p.subjectCode || "", examType:p.examType, academicYear:p.academicYear });
+    setForm({ title:p.title, semesters:(p.semesters || [p.semester]).map(String), subject:p.subject, subjectCode:p.subjectCode || "", examType:p.examType, academicYear:p.academicYear });
     setFile(null); setMessage("Editing metadata. The existing file will remain unchanged.");
     document.querySelector(".admin-form")?.scrollIntoView({ behavior:"smooth", block:"start" });
   }
@@ -90,17 +90,17 @@ function AdminPanel({ onClose, onChanged }) {
           <div className="form-heading"><div><h3>{editing ? "Edit paper details" : "Upload a paper"}</h3><p className="muted">PDFs and common image formats are supported.</p></div>{editing && <button type="button" className="button subtle" onClick={()=>{setEditing(null);setForm(emptyForm);setFile(null);setMessage("");}}>Cancel edit</button>}</div>
           <div className="form-grid">
             <label className="span-2">Paper title<input name="title" value={form.title} onChange={setField} required maxLength="180" placeholder="e.g. Data Structures — MTE" /></label>
-            <label>Semester<select name="semester" value={form.semester} onChange={setField}>{[1,2,3,4,5,6,7,8].map(n=><option key={n} value={n}>Semester {n}</option>)}</select></label>
+            <fieldset className="semester-picker"><legend>Semesters</legend><div className="semester-options">{[1,2,3,4,5,6,7,8].map(n=><label key={n}><input type="checkbox" checked={form.semesters.includes(String(n))} onChange={e=>setForm(f=>({...f, semesters:e.target.checked ? [...f.semesters, String(n)] : f.semesters.filter(value=>value !== String(n))}))} />{n}</label>)}</div><small className="muted">Select all semesters where this paper applies.</small></fieldset>
             <label>Exam type<select name="examType" value={form.examType} onChange={setField}><option>MTE</option><option>ETE</option></select></label>
             <label>Subject<input name="subject" value={form.subject} onChange={setField} required placeholder="e.g. Database Management Systems" /></label>
             <label>Subject code <span className="muted">(optional)</span><input name="subjectCode" value={form.subjectCode} onChange={setField} placeholder="e.g. KCS-501" /></label>
-            <label>Academic year<input name="academicYear" value={form.academicYear} onChange={setField} required placeholder="2025-2026" /></label>
+            <label>Academic year<input name="academicYear" value={form.academicYear} onChange={setField} required pattern="\d{4}" maxLength="4" placeholder="2025" /></label>
             {!editing && <label className="file-drop span-2"><UploadCloud size={24}/><b>{file ? file.name : "Choose a PDF or image"}</b><span className="muted">{file ? formatBytes(file.size) : "Maximum size set by server (default 20 MB)"}</span><input type="file" accept="application/pdf,image/*" onChange={e=>setFile(e.target.files?.[0] || null)} required /></label>}
           </div>
           <button className="button primary full" disabled={busy}>{busy ? "Saving…" : editing ? "Save paper details" : "Upload paper"}</button>
         </form>
         <div className="admin-list-head"><h3>Uploaded papers <span className="count">{papers.length}</span></h3><button className="button subtle" onClick={loadAdminPapers}><RefreshCw size={15}/> Refresh</button></div>
-        <div className="admin-paper-list">{papers.map(p=><div className="admin-paper" key={p._id}><span className="file-type">{p.fileType==="pdf"?<FileText/>:<ImageIcon/>}</span><div className="admin-paper-text"><b>{p.title}</b><span>{p.subject} · Sem {p.semester} · {p.examType} · {p.academicYear}</span></div><button className="icon-btn" title="Edit details" onClick={()=>editPaper(p)}><Pencil size={16}/></button><button className="icon-btn danger-icon" title="Delete paper" onClick={()=>deletePaper(p)} disabled={busy}><Trash2 size={16}/></button></div>)}</div>
+        <div className="admin-paper-list">{papers.map(p=><div className="admin-paper" key={p._id}><span className="file-type">{p.fileType==="pdf"?<FileText/>:<ImageIcon/>}</span><div className="admin-paper-text"><b>{p.title}</b><span>{p.subject} · Sem {(p.semesters || [p.semester]).join(", ")} · {p.examType} · {p.academicYear}</span></div><button className="icon-btn" title="Edit details" onClick={()=>editPaper(p)}><Pencil size={16}/></button><button className="icon-btn danger-icon" title="Delete paper" onClick={()=>deletePaper(p)} disabled={busy}><Trash2 size={16}/></button></div>)}</div>
       </div>}
       {(message || error) && <div className={error?"alert error":"alert success"}>{error || message}</div>}
     </section>
@@ -150,7 +150,7 @@ export default function App() {
         {error && <div className="error-banner"><b>Could not load papers.</b><span>{error}</span><button className="button outline" onClick={()=>{loadMeta();loadPapers();}}>Try again</button></div>}
         {loading ? <div className="empty-state"><div className="spinner"></div><h3>Loading paper library…</h3><p>Connecting to the paper collection.</p></div> :
           papers.length === 0 ? <div className="empty-state"><div className="empty-icon"><BookOpen size={28}/></div><h3>No papers found yet</h3><p>{error?"Fix the API configuration and retry.":"Try changing your filters, or check back after the admin uploads papers."}</p>{!error && <button className="button outline" onClick={resetFilters}>Clear filters</button>}</div> :
-          <div className="paper-grid">{papers.map(p=><article className="paper-card" key={p._id}><div className="paper-card-art"><div className={`file-illustration ${p.fileType}`}><span className="file-corner"></span>{p.fileType==="pdf"?<FileText size={35}/>:<ImageIcon size={35}/>}<b>{p.fileType==="pdf"?"PDF":"IMAGE"}</b></div><div className="art-meta"><span className={`exam-tag ${p.examType.toLowerCase()}`}>{p.examType}</span><span>SEM {String(p.semester).padStart(2,"0")}</span></div></div><div className="paper-card-body"><div className="year-row"><span>{p.academicYear}</span><span>{formatBytes(p.bytes)}</span></div><h3>{p.title}</h3><p className="subject-line">{p.subject}{p.subjectCode ? ` · ${p.subjectCode}` : ""}</p><div className="paper-card-actions"><button className="button primary" onClick={()=>setPreview(p)}><Eye size={16}/> Preview</button><a className="button outline" href={`${API}/papers/${p._id}/download`}><Download size={16}/> Download</a></div><span className="download-count"><Download size={12}/> {p.downloadCount ?? 0} downloads</span></div></article>)}</div>}
+          <div className="paper-grid">{papers.map(p=><article className="paper-card" key={p._id}><div className="paper-card-art"><div className={`file-illustration ${p.fileType}`}><span className="file-corner"></span>{p.fileType==="pdf"?<FileText size={35}/>:<ImageIcon size={35}/>}<b>{p.fileType==="pdf"?"PDF":"IMAGE"}</b></div><div className="art-meta"><span className={`exam-tag ${p.examType.toLowerCase()}`}>{p.examType}</span><span>SEM {(p.semesters || [p.semester]).join(", ")}</span></div></div><div className="paper-card-body"><div className="year-row"><span>{p.academicYear}</span><span>{formatBytes(p.bytes)}</span></div><h3>{p.title}</h3><p className="subject-line">{p.subject}{p.subjectCode ? ` · ${p.subjectCode}` : ""}</p><div className="paper-card-actions"><button className="button primary" onClick={()=>setPreview(p)}><Eye size={16}/> Preview</button><a className="button outline" href={`${API}/papers/${p._id}/download`}><Download size={16}/> Download</a></div><span className="download-count"><Download size={12}/> {p.downloadCount ?? 0} downloads</span></div></article>)}</div>}
       </section>
       <section className="how-section" id="how"><div className="container"><div className="eyebrow dark-eyebrow">SIMPLE BY DESIGN</div><h2>From search to <em>study mode.</em></h2><div className="steps"><div className="step"><span>01</span><Search/><h3>Find a paper</h3><p>Filter by semester, subject, MTE/ETE, and year to narrow your search.</p></div><div className="step"><span>02</span><Eye/><h3>Preview instantly</h3><p>Read PDFs and images in the website without downloading first.</p></div><div className="step"><span>03</span><Download/><h3>Practice your way</h3><p>Open or download a paper when you want an offline copy.</p></div></div></div></section>
     </main>
