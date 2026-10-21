@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, Search, Download, Eye, ShieldCheck, UploadCloud, X, FileText, Image as ImageIcon, Trash2, Pencil, GraduationCap, Filter, LockKeyhole, RefreshCw, ExternalLink } from "lucide-react";
+import { BookOpen, Search, Download, Eye, ShieldCheck, UploadCloud, X, FileText, Image as ImageIcon, Trash2, Pencil, GraduationCap, Filter, LockKeyhole, RefreshCw, ExternalLink, Power } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/$/, "");
 const emptyForm = { title: "", semesters: ["1"], subject: "", subjectCode: "", examType: "MTE", academicYear: "2025" };
@@ -32,7 +32,7 @@ function PreviewModal({ paper, onClose }) {
     </section>
   </div>;
 }
-function AdminPanel({ onClose, onChanged }) {
+function AdminPanel({ onClose, onChanged, onMaintenanceChanged }) {
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
   const [form, setForm] = useState(emptyForm);
@@ -43,6 +43,8 @@ function AdminPanel({ onClose, onChanged }) {
   const [error, setError] = useState("");
   const [papers, setPapers] = useState([]);
   const [editing, setEditing] = useState(null);
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
 
   async function unlock(e) {
     e.preventDefault(); setBusy(true); setError(""); setMessage("");
@@ -50,9 +52,29 @@ function AdminPanel({ onClose, onChanged }) {
     catch (err) { setError(err.message); } finally { setBusy(false); }
   }
   async function loadAdminPapers() {
-    try { const d = await request("/papers"); setPapers(d.papers); } catch (err) { setError(err.message); }
+    try { const d = await request("/papers", { headers: { Authorization: "Bearer " + token } }); setPapers(d.papers); } catch (err) { setError(err.message); }
   }
   useEffect(() => { if (token) loadAdminPapers(); }, [token]);
+  useEffect(() => {
+    if (!token) return;
+    request("/admin/maintenance", { headers: { Authorization: "Bearer " + token } })
+      .then(data => setMaintenanceMode(data.maintenanceMode))
+      .catch(err => setError(err.message));
+  }, [token]);
+  async function toggleMaintenance() {
+    const nextMode = !maintenanceMode;
+    setMaintenanceBusy(true); setError(""); setMessage("");
+    try {
+      const data = await request("/admin/maintenance", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ maintenanceMode: nextMode }),
+      });
+      setMaintenanceMode(data.maintenanceMode);
+      onMaintenanceChanged(data.maintenanceMode);
+      setMessage(data.maintenanceMode ? "Maintenance mode is ON. Public access is blocked." : "Maintenance mode is OFF. Website is live again.");
+    } catch (err) { setError(err.message); } finally { setMaintenanceBusy(false); }
+  }
   function setField(e) { setForm(f => ({ ...f, [e.target.name]: e.target.value })); }
   async function analyzePaper() {
     if (!file) {
@@ -116,6 +138,7 @@ function AdminPanel({ onClose, onChanged }) {
       {!token ? <form className="unlock-form" onSubmit={unlock}><div className="lock-art"><LockKeyhole size={27} /></div><h3>Admin unlock</h3><p className="muted">Students can browse papers without signing in. Only the admin password is required here.</p><label>Admin password<input autoFocus type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter admin password" required /></label><button className="button primary full" disabled={busy}>{busy ? "Checking…" : "Unlock admin panel"}</button></form> :
         <div className="admin-content">
           <div className="notice"><ShieldCheck size={17} /> Admin session active. Session expires after 4 hours or when this panel is closed.</div>
+          <div className={`maintenance-control ${maintenanceMode ? "active" : ""}`}><div><b>{maintenanceMode ? "Maintenance mode is ON" : "Maintenance mode is OFF"}</b><span>{maintenanceMode ? "Visitors see the maintenance screen and public APIs are blocked." : "The website is currently available to visitors."}</span></div><button type="button" className={`button ${maintenanceMode ? "maintenance-off" : "maintenance-on"}`} onClick={toggleMaintenance} disabled={maintenanceBusy}><Power size={15} />{maintenanceBusy ? "Updating…" : maintenanceMode ? "Turn off" : "Turn on"}</button></div>
           <form className="admin-form" onSubmit={savePaper}>
             <div className="form-heading"><div><h3>{editing ? "Edit paper details" : "Upload a paper"}</h3><p className="muted">PDFs and common image formats are supported.</p></div>{editing && <div className="form-heading-actions"><button type="button" className="button smart-button" onClick={analyzeExistingPaper} disabled={busy || analyzing}>{analyzing ? "Analyzing…" : "✨ AI re-analyze"}</button><button type="button" className="button subtle" onClick={() => { setEditing(null); setForm(emptyForm); setFile(null); setMessage(""); }}>Cancel edit</button></div>}</div>
             <div className="form-grid">
@@ -148,6 +171,7 @@ export default function App() {
   const [fileType, setFileType] = useState("");
   const [preview, setPreview] = useState(null);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
 
   async function loadMeta() {
     try { const m = await request("/papers/meta"); setMeta(m); } catch (err) { /* list request below shows API error */ }
@@ -166,12 +190,15 @@ export default function App() {
     finally { setLoading(false); }
   }
   useEffect(() => { loadMeta(); }, []);
+  useEffect(() => {
+    request("/status").then(data => setMaintenanceMode(data.maintenanceMode)).catch(() => {});
+  }, []);
   useEffect(() => { const id = setTimeout(loadPapers, 250); return () => clearTimeout(id); }, [q, semester, examType, year, fileType]);
   const resetFilters = () => { setQ(""); setSemester(""); setExamType(""); setYear(""); setFileType(""); };
   const groupedCount = useMemo(() => papers.length, [papers]);
   return <div className="app-shell">
     <div className="top-strip"><div className="container top-strip-inner"><span><span className="status-dot"></span> Student access is open — no account required</span><span>Built for B.Tech CSE students</span></div></div>
-    <header className="site-header"><div className="container nav-inner"><a className="brand" href="#"><span className="brand-mark"><GraduationCap size={25} /></span><span><b>Paper<span>Hub</span></b><small>B.TECH CSE LIBRARY</small></span></a><nav><a href="#library">Question papers</a><a href="#how">How it works</a><button className="button admin-button" onClick={() => setAdminOpen(true)}><ShieldCheck size={16} /> Admin</button></nav></div></header>
+    <header className="site-header"><div className="container nav-inner"><a className="brand" href="#"><span className="brand-mark"><GraduationCap size={25} /></span><span><b>Paper<span>Hub</span></b><small>B.TECH CSE LIBRARY</small></span></a><nav><a href="#library">Question papers</a><a href="#how">How it works</a><button className="button admin-button maintenance-admin-trigger" onClick={() => setAdminOpen(true)}><ShieldCheck size={16} /> Admin</button></nav></div></header>
     <main>
       <section className="hero"><div className="hero-grid"></div><div className="container hero-content"><div className="hero-copy"><div className="eyebrow hero-eyebrow"><span></span> YOUR SEMESTER. YOUR RESOURCES.</div><h1>Past papers.<br /><em>Better preparation.</em></h1><p>Find, preview, and practice with B.Tech CSE MTE and ETE question papers — organized by semester, subject, and academic year.</p><div className="hero-actions"><a className="button white-button" href="#library">Explore papers <span>↓</span></a><span className="hero-note"><ShieldCheck size={16} /> Free access · No login</span></div></div><div className="hero-card"><div className="hero-card-top"><span className="mini-label">PAPER LIBRARY</span><BookOpen size={20} /></div><div className="hero-stat">{meta.total ?? 0}<span> papers available</span></div><div className="semester-mini-grid">{[1, 2, 3, 4, 5, 6, 7, 8].map(n => <div key={n}><span>SEM</span><b>{String(n).padStart(2, "0")}</b></div>)}</div><div className="hero-card-foot"><span className="green-pulse"></span> PDFs &amp; images · In-browser preview</div></div></div><div className="container hero-bottom"><span>01 / BROWSE</span><span>02 / PREVIEW</span><span>03 / PREPARE</span></div></section>
       <section className="container library-section" id="library">
@@ -186,6 +213,7 @@ export default function App() {
     </main>
     <footer className="site-footer"><div className="container footer-inner"><a className="brand footer-brand" href="#"><span className="brand-mark"><GraduationCap size={22} /></span><span><b>Paper<span>Hub</span></b><small>B.TECH CSE LIBRARY</small></span></a><p>Built for students. Focused on preparation.</p><span>© {new Date().getFullYear()} PaperHub</span></div></footer>
     {preview && <PreviewModal paper={preview} onClose={() => setPreview(null)} />}
-    {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} onChanged={() => { loadMeta(); loadPapers(); }} />}
+    {maintenanceMode && <div className="maintenance-overlay" role="alert"><div className="maintenance-message"><Power size={30} /><span className="eyebrow">TEMPORARILY UNAVAILABLE</span><h1>Website under maintenance</h1><p>We are making a few improvements. Please check back shortly.</p><button className="button maintenance-access" onClick={() => setAdminOpen(true)}><ShieldCheck size={15} /> Admin access</button></div></div>}
+    {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} onChanged={() => { loadMeta(); loadPapers(); }} onMaintenanceChanged={setMaintenanceMode} />}
   </div>;
 }

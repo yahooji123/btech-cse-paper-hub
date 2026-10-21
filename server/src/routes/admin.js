@@ -6,6 +6,7 @@ import Paper from "../models/Paper.js";
 import cloudinary from "../config/cloudinary.js";
 import { requireAdmin } from "../middleware/adminAuth.js";
 import { extractPaperDetails } from "../config/gemini.js";
+import SiteSettings from "../models/SiteSettings.js";
 
 const router = Router();
 const loginLimiter = rateLimit({
@@ -108,6 +109,27 @@ router.post("/unlock", loginLimiter, (req, res) => {
   }
   const token = jwt.sign({ role: "admin" }, process.env.ADMIN_SESSION_SECRET, { expiresIn: "4h" });
   res.json({ token, expiresIn: 14400 });
+});
+
+router.get("/maintenance", requireAdmin, async (_req, res, next) => {
+  try {
+    const settings = await SiteSettings.findOne({ key: "site" }).select("maintenanceMode").lean();
+    res.json({ maintenanceMode: Boolean(settings?.maintenanceMode) });
+  } catch (err) { next(err); }
+});
+
+router.patch("/maintenance", requireAdmin, async (req, res, next) => {
+  try {
+    if (typeof req.body?.maintenanceMode !== "boolean") {
+      return res.status(400).json({ message: "maintenanceMode must be a boolean." });
+    }
+    const settings = await SiteSettings.findOneAndUpdate(
+      { key: "site" },
+      { $set: { maintenanceMode: req.body.maintenanceMode }, $setOnInsert: { key: "site" } },
+      { new: true, upsert: true, runValidators: true }
+    ).select("maintenanceMode").lean();
+    res.json({ maintenanceMode: settings.maintenanceMode });
+  } catch (err) { next(err); }
 });
 
 function uploadBuffer(buffer, options) {
