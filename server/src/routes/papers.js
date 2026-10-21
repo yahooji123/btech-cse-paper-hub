@@ -36,15 +36,16 @@ router.get("/", async (req, res, next) => {
 
 router.get("/meta", async (_req, res, next) => {
   try {
-    const [semesters, legacySemesters, years, subjects, total] = await Promise.all([
+    const [semesters, legacySemesters, years, subjects, total, downloads] = await Promise.all([
       Paper.distinct("semester"),
       Paper.distinct("semesters"),
       Paper.distinct("academicYear"),
       Paper.distinct("subject"),
       Paper.countDocuments(),
+      Paper.aggregate([{ $group: { _id: null, total: { $sum: "$downloadCount" } } }]),
     ]);
     const allSemesters = [...new Set([...semesters, ...legacySemesters].filter(Number.isInteger))];
-    res.json({ semesters: allSemesters.sort((a,b)=>a-b), years: years.sort().reverse(), subjects: subjects.sort(), total });
+    res.json({ semesters: allSemesters.sort((a,b)=>a-b), years: years.sort().reverse(), subjects: subjects.sort(), total, totalDownloads: downloads[0]?.total || 0 });
   } catch (err) { next(err); }
 });
 
