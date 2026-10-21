@@ -5,6 +5,7 @@ import multer from "multer";
 import Paper from "../models/Paper.js";
 import cloudinary from "../config/cloudinary.js";
 import { requireAdmin } from "../middleware/adminAuth.js";
+import { extractPaperDetails } from "../config/gemini.js";
 
 const router = Router();
 const loginLimiter = rateLimit({
@@ -36,6 +37,64 @@ function parseSemesters(value) {
 
 function validateAcademicYear(value) {
   return typeof value === "string" && /^\d{4}$/.test(value.trim());
+}
+
+function normalizeForKey(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function makeTitleKey(value) {
+  return normalizeForKey(value).replace(/[^a-z0-9]+/g, "");
+}
+
+function makeDuplicateKey({ subject, academicYear, examType, semesters }) {
+  return [
+    normalizeForKey(subject),
+    normalizeForKey(academicYear),
+    normalizeForKey(examType),
+    [...semesters].sort((a, b) => a - b).join(","),
+  ].join("|");
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function getStoredPaperFile(paper) {
+  const response = await fetch(paper.fileUrl);
+  if (!response.ok) throw new Error("The paper file could not be read from storage.");
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    mimetype: paper.mimeType || response.headers.get("content-type") || "application/pdf",
+  };
+}
+
+async function findDuplicatePaper({ title, subject, academicYear, examType, semesters, excludeId }) {
+  const duplicateKey = makeDuplicateKey({ subject, academicYear, examType, semesters });
+  const query = {
+    $or: [
+      { duplicateKey },
+      { title: { $regex: `^${escapeRegex(String(title).trim())}$`, $options: "i" } },
+      {
+        academicYear: academicYear.trim(),
+        examType,
+      },
+    ],
+  };
+  if (excludeId) query._id = { $ne: excludeId };
+  const candidates = await Paper.find(query).select("_id title titleKey subject academicYear examType semesters semester duplicateKey").limit(500).lean();
+  const titleKey = makeTitleKey(title);
+  return candidates.find(paper =>
+    paper.titleKey === titleKey ||
+    makeTitleKey(paper.title) === titleKey ||
+    paper.duplicateKey === duplicateKey ||
+    (
+      normalizeForKey(paper.subject) === normalizeForKey(subject) &&
+      paper.academicYear === academicYear.trim() &&
+      paper.examType === examType &&
+      JSON.stringify([...(paper.semesters || [paper.semester])].sort((a, b) => a - b)) === JSON.stringify([...semesters].sort((a, b) => a - b))
+    )
+  ) || null;
 }
 
 router.post("/unlock", loginLimiter, (req, res) => {
@@ -72,6 +131,12 @@ router.post("/papers", requireAdmin, upload.single("file"), async (req, res, nex
     if (!semesters) return res.status(400).json({ message: "Select at least one semester between 1 and 8." });
     if (!["MTE", "ETE"].includes(examType)) return res.status(400).json({ message: "Exam type must be MTE or ETE." });
     if (!validateAcademicYear(academicYear)) return res.status(400).json({ message: "Academic year must be a four-digit year, like 2025." });
+    const duplicateKey = makeDuplicateKey({ subject, academicYear, examType, semesters });
+    const titleKey = makeTitleKey(title);
+    const existingPaper = await findDuplicatePaper({ title, subject, academicYear, examType, semesters });
+    if (existingPaper) {
+      return res.status(409).json({ message: "This subject paper for the same academic year, exam type, and semester already exists." });
+    }
 
     const isPdf = req.file.mimetype === "application/pdf";
     const result = await uploadBuffer(req.file.buffer, {
@@ -85,6 +150,8 @@ router.post("/papers", requireAdmin, upload.single("file"), async (req, res, nex
 
     const paper = await Paper.create({
       title: title.trim(),
+      titleKey,
+      duplicateKey,
       semester: semesters[0],
       semesters,
       subject: subject.trim(),
@@ -100,6 +167,24 @@ router.post("/papers", requireAdmin, upload.single("file"), async (req, res, nex
       bytes: result.bytes || req.file.size,
     });
     res.status(201).json({ paper });
+  } catch (err) { next(err); }
+});
+
+router.post("/papers/analyze", requireAdmin, upload.single("file"), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: "Choose a PDF or image file." });
+    const details = await extractPaperDetails(req.file);
+    res.json({ details });
+  } catch (err) { next(err); }
+});
+
+router.post("/papers/:id/analyze", requireAdmin, async (req, res, next) => {
+  try {
+    const paper = await Paper.findById(req.params.id).lean();
+    if (!paper) return res.status(404).json({ message: "Paper not found." });
+    const file = await getStoredPaperFile(paper);
+    const details = await extractPaperDetails(file);
+    res.json({ details });
   } catch (err) { next(err); }
 });
 
@@ -119,6 +204,24 @@ router.patch("/papers/:id", requireAdmin, async (req, res, next) => {
       if (!validateAcademicYear(updates.academicYear)) return res.status(400).json({ message: "Academic year must be a four-digit year, like 2025." });
       updates.academicYear = updates.academicYear.trim();
     }
+    if (updates.subject !== undefined) updates.subject = String(updates.subject).trim();
+    if (updates.title !== undefined) updates.title = String(updates.title).trim();
+    const currentPaper = await Paper.findById(req.params.id).lean();
+    if (!currentPaper) return res.status(404).json({ message: "Paper not found." });
+    const duplicateFields = {
+      title: updates.title ?? currentPaper.title,
+      subject: updates.subject ?? currentPaper.subject,
+      academicYear: updates.academicYear ?? currentPaper.academicYear,
+      examType: updates.examType ?? currentPaper.examType,
+      semesters: updates.semesters ?? currentPaper.semesters ?? [currentPaper.semester],
+    };
+    const duplicateKey = makeDuplicateKey(duplicateFields);
+    const existingPaper = await findDuplicatePaper({ ...duplicateFields, excludeId: req.params.id });
+    if (existingPaper) {
+      return res.status(409).json({ message: "These details match an existing paper. Duplicate paper was not saved." });
+    }
+    updates.duplicateKey = duplicateKey;
+    updates.titleKey = makeTitleKey(duplicateFields.title);
     const paper = await Paper.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
     if (!paper) return res.status(404).json({ message: "Paper not found." });
     res.json({ paper });

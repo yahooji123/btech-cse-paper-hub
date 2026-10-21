@@ -3,6 +3,8 @@ import mongoose from "mongoose";
 const paperSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true, maxlength: 180 },
+    titleKey: { type: String, unique: true, sparse: true, select: false },
+    duplicateKey: { type: String, unique: true, sparse: true, select: false },
     // `semester` is retained for older records and sorting; new records use `semesters`.
     semester: { type: Number, min: 1, max: 8 },
     semesters: { type: [Number], required: true, validate: { validator: value => value.length > 0 && value.every(number => Number.isInteger(number) && number >= 1 && number <= 8), message: "At least one valid semester is required." } },

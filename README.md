@@ -9,6 +9,9 @@ A full-stack question-paper library built with React + Vite, Node.js + Express, 
 - Preview PDFs and images inside the website.
 - Download links are available, but downloading is not required to view files.
 - Admin can upload, edit metadata, and delete papers.
+- Admin can use Gemini AI to extract paper metadata from an uploaded PDF/image before reviewing and publishing it.
+- Admin can re-analyze papers already stored in Cloudinary from the edit form and review the suggested metadata before saving.
+- Uploads are protected against duplicate titles, including older papers that were added before duplicate tracking was enabled.
 - Admin upload/delete routes are protected by a server-side password.
 - Files are uploaded to Cloudinary; metadata is stored in MongoDB.
 
@@ -31,6 +34,7 @@ Edit `server/.env` and set:
 - `CLOUDINARY_API_SECRET`
 - `ADMIN_PASSWORD` (defaults to `admin@123` for local setup; change it before public deployment)
 - `ADMIN_SESSION_SECRET` (long random secret)
+- `GEMINI_API_KEY` (Google AI Studio API key for Smart Upload)
 
 Install and run:
 ```bash
@@ -55,9 +59,11 @@ The server uploads files directly to Cloudinary from memory, so uploads are not 
 
 ## Security notes
 - Do not put admin passwords or Cloudinary secrets in React/Vite environment variables.
+- Do not put `GEMINI_API_KEY` in React/Vite environment variables; Smart Upload sends files through the server.
 - Never commit `.env` files to GitHub.
 - The sample `.env.example` uses `admin@123` for the requested local demo. Change it to a strong unique password before deploying publicly.
 - The admin password is checked by the server. Students do not need accounts.
+- Smart Upload analyzes a file first and fills the metadata form; review the values before clicking Upload paper.
 - For a public production deployment, use HTTPS and consider adding rate limiting, upload limits, and a stronger admin identity/session system.
 - This project uses a simple server-side admin token for the admin panel. It is suitable as a starter project, not a replacement for a full identity provider.
 
