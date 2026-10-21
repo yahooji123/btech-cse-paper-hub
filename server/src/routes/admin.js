@@ -8,6 +8,7 @@ import { requireAdmin } from "../middleware/adminAuth.js";
 import { extractPaperDetails } from "../config/gemini.js";
 import SiteSettings from "../models/SiteSettings.js";
 import PaperRequest from "../models/PaperRequest.js";
+import Feedback from "../models/Feedback.js";
 
 const router = Router();
 const loginLimiter = rateLimit({
@@ -173,6 +174,43 @@ router.patch("/announcement", requireAdmin, async (req, res, next) => {
       { new: true, upsert: true, runValidators: true }
     ).select("announcementEnabled announcementText").lean();
     res.json({ announcementEnabled: settings.announcementEnabled, announcementText: settings.announcementText });
+  } catch (err) { next(err); }
+});
+
+router.get("/feedback-settings", requireAdmin, async (_req, res, next) => {
+  try {
+    const settings = await SiteSettings.findOne({ key: "site" }).select("feedbackEnabled").lean();
+    res.json({ feedbackEnabled: Boolean(settings?.feedbackEnabled) });
+  } catch (err) { next(err); }
+});
+
+router.patch("/feedback-settings", requireAdmin, async (req, res, next) => {
+  try {
+    if (typeof req.body?.feedbackEnabled !== "boolean") {
+      return res.status(400).json({ message: "feedbackEnabled must be a boolean." });
+    }
+    const settings = await SiteSettings.findOneAndUpdate(
+      { key: "site" },
+      { $set: { feedbackEnabled: req.body.feedbackEnabled }, $setOnInsert: { key: "site" } },
+      { new: true, upsert: true, runValidators: true }
+    ).select("feedbackEnabled").lean();
+    res.json({ feedbackEnabled: settings.feedbackEnabled });
+  } catch (err) { next(err); }
+});
+
+router.get("/feedback", requireAdmin, async (_req, res, next) => {
+  try {
+    const feedback = await Feedback.find().sort({ createdAt: -1 }).limit(200).lean();
+    res.json({ feedback });
+  } catch (err) { next(err); }
+});
+
+router.delete("/feedback/:id", requireAdmin, async (req, res, next) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: "Invalid feedback ID." });
+    const deleted = await Feedback.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ message: "Feedback not found." });
+    res.json({ message: "Feedback deleted." });
   } catch (err) { next(err); }
 });
 

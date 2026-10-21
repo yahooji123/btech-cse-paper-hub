@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, Search, Download, Eye, ShieldCheck, UploadCloud, X, FileText, Image as ImageIcon, Trash2, Pencil, GraduationCap, Filter, LockKeyhole, RefreshCw, ExternalLink, Power, Megaphone, Send } from "lucide-react";
+import { BookOpen, Search, Download, Eye, ShieldCheck, UploadCloud, X, FileText, Image as ImageIcon, Trash2, Pencil, GraduationCap, Filter, LockKeyhole, RefreshCw, ExternalLink, Power, Megaphone, Send, Star } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/$/, "");
 const emptyForm = { title: "", semesters: ["1"], subject: "", subjectCode: "", examType: "MTE", academicYear: "2025" };
@@ -17,7 +17,12 @@ function formatBytes(bytes = 0) {
 function formatCount(count = 0) {
   return new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 }).format(count);
 }
-function PreviewModal({ paper, onClose }) {
+function isRecentlyAdded(createdAt) {
+  if (!createdAt) return false;
+  const createdTime = new Date(createdAt).getTime();
+  return Number.isFinite(createdTime) && Date.now() - createdTime <= 3 * 24 * 60 * 60 * 1000;
+}
+function PreviewModal({ paper, onClose, onDownloaded }) {
   useEffect(() => {
     const key = e => e.key === "Escape" && onClose();
     window.addEventListener("keydown", key);
@@ -31,9 +36,24 @@ function PreviewModal({ paper, onClose }) {
         {paper.fileType === "image" ? <img className="preview-image" src={paper.fileUrl} alt={paper.title} /> :
           <iframe className="pdf-frame" title={paper.title} src={paper.fileUrl} />}
       </div>
-      <footer className="modal-footer"><span className="muted">Preview opens here; downloading is optional.</span><a className="button primary" href={paper.fileUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Open in new tab</a><a className="button outline" href={`${API}/papers/${paper._id}/download`}><Download size={16} /> Download</a></footer>
+      <footer className="modal-footer"><span className="muted">Preview opens here; downloading is optional.</span><a className="button primary" href={paper.fileUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Open in new tab</a><a className="button outline" href={`${API}/papers/${paper._id}/download`} onClick={() => onDownloaded(paper)}><Download size={16} /> Download</a></footer>
     </section>
   </div>;
+}
+function FeedbackModal({ paper, onClose }) {
+  const [rating, setRating] = useState(0);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState("");
+  const [error, setError] = useState("");
+  async function submit(e) {
+    e.preventDefault(); setBusy(true); setError(""); setResult("");
+    try {
+      const data = await request("/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paperId: paper._id, paperTitle: paper.title, rating, message }) });
+      setResult(data.message);
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}><section className="feedback-modal" role="dialog" aria-modal="true" aria-label="Share feedback"><header className="modal-head"><div><span className="eyebrow">QUICK FEEDBACK</span><h2>How was this paper?</h2><p>Your feedback helps us improve PaperHub.</p></div><button className="icon-btn" onClick={onClose} aria-label="Close feedback"><X /></button></header>{result ? <div className="feedback-success"><Star size={30} /><h3>Thank you!</h3><p>{result}</p><button className="button primary" onClick={onClose}>Done</button></div> : <form className="feedback-form" onSubmit={submit}><div className="rating-picker" aria-label="Rating">{[1, 2, 3, 4, 5].map(value => <button type="button" key={value} className={value <= rating ? "selected" : ""} onClick={() => setRating(value)} aria-label={`${value} star rating`}><Star size={29} fill="currentColor" /></button>)}</div><p className="rating-label">{rating ? `${rating} out of 5 stars` : "Select a rating"}</p><label>Message <span className="muted">(optional)</span><textarea value={message} onChange={e => setMessage(e.target.value)} maxLength="500" placeholder="Tell us what you think about this paper..." /></label>{(error) && <div className="alert error">{error}</div>}<button className="button primary full" disabled={busy || !rating}>{busy ? "Sending…" : "Send feedback"}</button></form>}</section></div>;
 }
 function MissingRequestModal({ onClose }) {
   const [form, setForm] = useState({ subject: "", semester: "1", examType: "MTE", academicYear: "2025", note: "" });
@@ -54,7 +74,7 @@ function MissingRequestModal({ onClose }) {
     </section>
   </div>;
 }
-function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSettingChanged, onAnnouncementChanged }) {
+function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSettingChanged, onAnnouncementChanged, onFeedbackSettingChanged }) {
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
   const [form, setForm] = useState(emptyForm);
@@ -73,6 +93,9 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
   const [announcementEnabled, setAnnouncementEnabled] = useState(false);
   const [announcementText, setAnnouncementText] = useState("");
   const [announcementBusy, setAnnouncementBusy] = useState(false);
+  const [feedbackEnabled, setFeedbackEnabled] = useState(false);
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedback, setFeedback] = useState([]);
 
   async function unlock(e) {
     e.preventDefault(); setBusy(true); setError(""); setMessage("");
@@ -94,8 +117,10 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
     Promise.all([
       request("/admin/request-settings", { headers: { Authorization: "Bearer " + token } }),
       request("/admin/announcement", { headers: { Authorization: "Bearer " + token } }),
+      request("/admin/feedback-settings", { headers: { Authorization: "Bearer " + token } }),
+      request("/admin/feedback", { headers: { Authorization: "Bearer " + token } }),
       request("/admin/paper-requests", { headers: { Authorization: "Bearer " + token } }),
-    ]).then(([settings, announcement, data]) => { setRequestEnabled(settings.missingRequestEnabled); setAnnouncementEnabled(announcement.announcementEnabled); setAnnouncementText(announcement.announcementText); setRequests(data.requests); }).catch(err => setError(err.message));
+    ]).then(([settings, announcement, feedbackSettings, feedbackData, data]) => { setRequestEnabled(settings.missingRequestEnabled); setAnnouncementEnabled(announcement.announcementEnabled); setAnnouncementText(announcement.announcementText); setFeedbackEnabled(feedbackSettings.feedbackEnabled); setFeedback(feedbackData.feedback); setRequests(data.requests); }).catch(err => setError(err.message));
   }, [token]);
   async function toggleMaintenance() {
     const nextMode = !maintenanceMode;
@@ -142,6 +167,24 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
       onAnnouncementChanged(data.announcementEnabled, data.announcementText);
       setMessage(data.announcementEnabled ? "Announcement is live for visitors." : "Announcement is saved and hidden.");
     } catch (err) { setError(err.message); } finally { setAnnouncementBusy(false); }
+  }
+  async function toggleFeedback() {
+    const nextEnabled = !feedbackEnabled;
+    setFeedbackBusy(true); setError(""); setMessage("");
+    try {
+      const data = await request("/admin/feedback-settings", { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify({ feedbackEnabled: nextEnabled }) });
+      setFeedbackEnabled(data.feedbackEnabled); onFeedbackSettingChanged(data.feedbackEnabled);
+      setMessage(data.feedbackEnabled ? "Feedback card will open after downloads." : "Feedback card is hidden from students.");
+    } catch (err) { setError(err.message); } finally { setFeedbackBusy(false); }
+  }
+  async function deleteFeedback(item) {
+    if (!confirm("Delete this feedback?")) return;
+    setBusy(true); setError("");
+    try {
+      await request(`/admin/feedback/${item._id}`, { method: "DELETE", headers: { Authorization: "Bearer " + token } });
+      setFeedback(current => current.filter(feedbackItem => feedbackItem._id !== item._id));
+      setMessage("Feedback deleted.");
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
   function setField(e) { setForm(f => ({ ...f, [e.target.name]: e.target.value })); }
   async function analyzePaper() {
@@ -209,6 +252,8 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
           <div className={`maintenance-control ${maintenanceMode ? "active" : ""}`}><div><b>{maintenanceMode ? "Maintenance mode is ON" : "Maintenance mode is OFF"}</b><span>{maintenanceMode ? "Visitors see the maintenance screen and public APIs are blocked." : "The website is currently available to visitors."}</span></div><button type="button" className={`button ${maintenanceMode ? "maintenance-off" : "maintenance-on"}`} onClick={toggleMaintenance} disabled={maintenanceBusy}><Power size={15} />{maintenanceBusy ? "Updating…" : maintenanceMode ? "Turn off" : "Turn on"}</button></div>
           <div className={`maintenance-control request-control ${requestEnabled ? "active" : ""}`}><div><b>{requestEnabled ? "Missing paper requests are ON" : "Missing paper requests are OFF"}</b><span>{requestEnabled ? "Students can request unavailable papers from the navbar ticker." : "The request button and ticker are hidden from students."}</span></div><button type="button" className={`button ${requestEnabled ? "maintenance-off" : "maintenance-on"}`} onClick={toggleRequests} disabled={requestBusy}><Megaphone size={15} />{requestBusy ? "Updating…" : requestEnabled ? "Turn off" : "Turn on"}</button></div>
           <div className={`announcement-editor ${announcementEnabled ? "active" : ""}`}><div className="announcement-editor-head"><div><b>Website announcement</b><span>Paste any notice for students, such as new paper uploads or important updates.</span></div><label className="announcement-switch"><input type="checkbox" checked={announcementEnabled} onChange={e => setAnnouncementEnabled(e.target.checked)} /><span>{announcementEnabled ? "Visible" : "Hidden"}</span></label></div><textarea value={announcementText} onChange={e => setAnnouncementText(e.target.value)} maxLength="500" placeholder="e.g. New Semester 5 DBMS papers have been added. Check them out now!" /><div className="announcement-editor-footer"><small>{announcementText.length}/500 characters</small><button type="button" className="button primary" onClick={saveAnnouncement} disabled={announcementBusy || (announcementEnabled && !announcementText.trim())}><Megaphone size={15} />{announcementBusy ? "Saving…" : "Save announcement"}</button></div></div>
+          <div className={`maintenance-control feedback-control ${feedbackEnabled ? "active" : ""}`}><div><b>{feedbackEnabled ? "Download feedback is ON" : "Download feedback is OFF"}</b><span>{feedbackEnabled ? "Students see a rating card after downloading a paper." : "The feedback card is hidden from students."}</span></div><button type="button" className={`button ${feedbackEnabled ? "maintenance-off" : "maintenance-on"}`} onClick={toggleFeedback} disabled={feedbackBusy}><Star size={15} />{feedbackBusy ? "Updating…" : feedbackEnabled ? "Turn off" : "Turn on"}</button></div>
+          <div className="admin-feedback"><div className="admin-list-head"><h3>Student feedback <span className="count">{feedback.length}</span></h3><button className="button subtle" onClick={() => request("/admin/feedback", { headers: { Authorization: "Bearer " + token } }).then(data => setFeedback(data.feedback)).catch(err => setError(err.message))}><RefreshCw size={15} /> Refresh</button></div>{feedback.length === 0 ? <p className="muted">No feedback received yet.</p> : <div className="feedback-list">{feedback.map(item => <div className="feedback-item" key={item._id}><div><b>{item.paperTitle || "Paper feedback"} · {"★".repeat(item.rating)}{"☆".repeat(5 - item.rating)}</b>{item.message && <span>{item.message}</span>}<small>{new Date(item.createdAt).toLocaleDateString()}</small></div><button className="icon-btn danger-icon" title="Delete feedback" onClick={() => deleteFeedback(item)} disabled={busy}><Trash2 size={15} /></button></div>)}</div>}</div>
           <div className="admin-requests"><div className="admin-list-head"><h3>Missing paper requests <span className="count">{requests.length}</span></h3><button className="button subtle" onClick={() => request("/admin/paper-requests", { headers: { Authorization: "Bearer " + token } }).then(data => setRequests(data.requests)).catch(err => setError(err.message))}><RefreshCw size={15} /> Refresh</button></div>{requests.length === 0 ? <p className="muted">No student requests yet.</p> : <div className="request-list">{requests.map(item => <div className="request-item" key={item._id}><div><b>{item.subject}</b><span>Semester {item.semester} · {item.examType} · {item.academicYear}</span>{item.note && <small>{item.note}</small>}</div><time>{new Date(item.createdAt).toLocaleDateString()}</time><button className="icon-btn danger-icon" title="Remove request" aria-label={`Remove request for ${item.subject}`} onClick={() => deleteRequest(item)} disabled={busy}><Trash2 size={15} /></button></div>)}</div>}</div>
           <form className="admin-form" onSubmit={savePaper}>
             <div className="form-heading"><div><h3>{editing ? "Edit paper details" : "Upload a paper"}</h3><p className="muted">PDFs and common image formats are supported.</p></div>{editing && <div className="form-heading-actions"><button type="button" className="button smart-button" onClick={analyzeExistingPaper} disabled={busy || analyzing}>{analyzing ? "Analyzing…" : "✨ AI re-analyze"}</button><button type="button" className="button subtle" onClick={() => { setEditing(null); setForm(emptyForm); setFile(null); setMessage(""); }}>Cancel edit</button></div>}</div>
@@ -245,6 +290,8 @@ export default function App() {
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [missingRequestEnabled, setMissingRequestEnabled] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
+  const [feedbackEnabled, setFeedbackEnabled] = useState(false);
+  const [feedbackPaper, setFeedbackPaper] = useState(null);
   const [announcementEnabled, setAnnouncementEnabled] = useState(false);
   const [announcementText, setAnnouncementText] = useState("");
 
@@ -266,7 +313,7 @@ export default function App() {
   }
   useEffect(() => { loadMeta(); }, []);
   useEffect(() => {
-    request("/status").then(data => { setMaintenanceMode(data.maintenanceMode); setMissingRequestEnabled(data.missingRequestEnabled); setAnnouncementEnabled(data.announcementEnabled); setAnnouncementText(data.announcementText); }).catch(() => {});
+    request("/status").then(data => { setMaintenanceMode(data.maintenanceMode); setMissingRequestEnabled(data.missingRequestEnabled); setAnnouncementEnabled(data.announcementEnabled); setAnnouncementText(data.announcementText); setFeedbackEnabled(data.feedbackEnabled); }).catch(() => {});
   }, []);
   useEffect(() => { const id = setTimeout(loadPapers, 250); return () => clearTimeout(id); }, [q, semester, examType, year, fileType]);
   const resetFilters = () => { setQ(""); setSemester(""); setExamType(""); setYear(""); setFileType(""); };
@@ -282,14 +329,15 @@ export default function App() {
         {error && <div className="error-banner"><b>Could not load papers.</b><span>{error}</span><button className="button outline" onClick={() => { loadMeta(); loadPapers(); }}>Try again</button></div>}
         {loading ? <div className="empty-state"><div className="spinner"></div><h3>Loading paper library…</h3><p>Connecting to the paper collection.</p></div> :
           papers.length === 0 ? <div className="empty-state"><div className="empty-icon"><BookOpen size={28} /></div><h3>No papers found yet</h3><p>{error ? "Fix the API configuration and retry." : "Try changing your filters, or check back after the admin uploads papers."}</p>{!error && <button className="button outline" onClick={resetFilters}>Clear filters</button>}</div> :
-            <div className="paper-grid">{papers.map(p => <article className="paper-card" key={p._id}><div className="paper-card-art"><div className={`file-illustration ${p.fileType}`}><span className="file-corner"></span>{p.fileType === "pdf" ? <FileText size={35} /> : <ImageIcon size={35} />}<b>{p.fileType === "pdf" ? "PDF" : "IMAGE"}</b></div><div className="art-meta"><span className={`exam-tag ${p.examType.toLowerCase()}`}>{p.examType}</span><span>SEM {(p.semesters || [p.semester]).join(", ")}</span></div></div><div className="paper-card-body"><div className="year-row"><span>{p.academicYear}</span><span>{formatBytes(p.bytes)}</span></div><h3>{p.title}</h3><p className="subject-line">{p.subject}{p.subjectCode ? ` · ${p.subjectCode}` : ""}</p><div className="paper-card-actions"><button className="button primary" onClick={() => setPreview(p)}><Eye size={16} /> Preview</button><a className="button outline" href={`${API}/papers/${p._id}/download`}><Download size={16} /> Download</a></div><span className="download-count"><Download size={12} /> {p.downloadCount ?? 0} downloads</span></div></article>)}</div>}
+            <div className="paper-grid">{papers.map(p => <article className="paper-card" key={p._id}><div className="paper-card-art">{isRecentlyAdded(p.createdAt) && <span className="new-paper-badge">NEW</span>}<div className={`file-illustration ${p.fileType}`}><span className="file-corner"></span>{p.fileType === "pdf" ? <FileText size={35} /> : <ImageIcon size={35} />}<b>{p.fileType === "pdf" ? "PDF" : "IMAGE"}</b></div><div className="art-meta"><span className={`exam-tag ${p.examType.toLowerCase()}`}>{p.examType}</span><span>SEM {(p.semesters || [p.semester]).join(", ")}</span></div></div><div className="paper-card-body"><div className="year-row"><span>{p.academicYear}</span><span>{formatBytes(p.bytes)}</span></div><h3>{p.title}</h3><p className="subject-line">{p.subject}{p.subjectCode ? ` · ${p.subjectCode}` : ""}</p><div className="paper-card-actions"><button className="button primary" onClick={() => setPreview(p)}><Eye size={16} /> Preview</button><a className="button outline" href={`${API}/papers/${p._id}/download`} onClick={() => feedbackEnabled && setFeedbackPaper(p)}><Download size={16} /> Download</a></div><span className="download-count"><Download size={12} /> {p.downloadCount ?? 0} downloads</span></div></article>)}</div>}
       </section>
       <section className="how-section" id="how"><div className="container"><div className="eyebrow dark-eyebrow">SIMPLE BY DESIGN</div><h2>From search to <em>study mode.</em></h2><div className="steps"><div className="step"><span>01</span><Search /><h3>Find a paper</h3><p>Filter by semester, subject, MTE/ETE, and year to narrow your search.</p></div><div className="step"><span>02</span><Eye /><h3>Preview instantly</h3><p>Read PDFs and images in the website without downloading first.</p></div><div className="step"><span>03</span><Download /><h3>Practice your way</h3><p>Open or download a paper when you want an offline copy.</p></div></div></div></section>
     </main>
     <footer className="site-footer"><div className="container footer-inner"><a className="brand footer-brand" href="#"><span className="brand-mark"><GraduationCap size={22} /></span><span><b>Paper<span>Hub</span></b><small>B.TECH CSE LIBRARY</small></span></a><p>Built for students. Focused on preparation.</p><span>© {new Date().getFullYear()} PaperHub</span></div></footer>
-    {preview && <PreviewModal paper={preview} onClose={() => setPreview(null)} />}
+    {preview && <PreviewModal paper={preview} onClose={() => setPreview(null)} onDownloaded={paper => feedbackEnabled && setFeedbackPaper(paper)} />}
+    {feedbackPaper && <FeedbackModal paper={feedbackPaper} onClose={() => setFeedbackPaper(null)} />}
     {maintenanceMode && <div className="maintenance-overlay" role="alert"><div className="maintenance-message"><Power size={30} /><span className="eyebrow">TEMPORARILY UNAVAILABLE</span><h1>Website under maintenance</h1><p>We are making a few improvements. Please check back shortly.</p><button className="button maintenance-access" onClick={() => setAdminOpen(true)}><ShieldCheck size={15} /> Admin access</button></div></div>}
     {requestOpen && <MissingRequestModal onClose={() => setRequestOpen(false)} />}
-    {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} onChanged={() => { loadMeta(); loadPapers(); }} onMaintenanceChanged={setMaintenanceMode} onRequestSettingChanged={setMissingRequestEnabled} onAnnouncementChanged={(enabled, text) => { setAnnouncementEnabled(enabled); setAnnouncementText(text); }} />}
+    {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} onChanged={() => { loadMeta(); loadPapers(); }} onMaintenanceChanged={setMaintenanceMode} onRequestSettingChanged={setMissingRequestEnabled} onAnnouncementChanged={(enabled, text) => { setAnnouncementEnabled(enabled); setAnnouncementText(text); }} onFeedbackSettingChanged={setFeedbackEnabled} />}
   </div>;
 }

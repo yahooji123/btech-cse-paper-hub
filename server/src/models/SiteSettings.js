@@ -7,6 +7,7 @@ const siteSettingsSchema = new mongoose.Schema(
     missingRequestEnabled: { type: Boolean, default: false },
     announcementEnabled: { type: Boolean, default: false },
     announcementText: { type: String, trim: true, maxlength: 500, default: "" },
+    feedbackEnabled: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

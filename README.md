@@ -16,6 +16,8 @@ A full-stack question-paper library built with React + Vite, Node.js + Express, 
 - Admin can turn maintenance mode on or off. When enabled, the public website shows a maintenance screen and public paper APIs are blocked; admin access remains available.
 - Admin can turn missing-paper requests on or off. When enabled, students see an animated navbar ticker and can submit requests for papers that are not available.
 - Admin can publish a custom announcement from the admin panel and show or hide it for visitors.
+- Admin can show or hide a post-download feedback card where students submit a rating and optional message.
+- Papers uploaded within the last 3 days automatically receive a `NEW` badge.
 - Files are uploaded to Cloudinary; metadata is stored in MongoDB.
 
 ## Requirements
@@ -38,6 +40,8 @@ Edit `server/.env` and set:
 - `ADMIN_PASSWORD` (defaults to `admin@123` for local setup; change it before public deployment)
 - `ADMIN_SESSION_SECRET` (long random secret)
 - `GEMINI_API_KEY` (Google AI Studio API key for Smart Upload)
+- `GROQ_API_KEY` (optional fallback key; used automatically if Gemini fails, for image uploads)
+- `GROQ_MODEL` (optional Groq vision model; defaults to `qwen/qwen3.8-27b`)
 
 Install and run:
 ```bash
@@ -67,6 +71,7 @@ The server uploads files directly to Cloudinary from memory, so uploads are not 
 - The sample `.env.example` uses `admin@123` for the requested local demo. Change it to a strong unique password before deploying publicly.
 - The admin password is checked by the server. Students do not need accounts.
 - Smart Upload analyzes a file first and fills the metadata form; review the values before clicking Upload paper.
+- If Gemini is unavailable, Smart Upload automatically tries Groq for image uploads. PDF extraction still requires Gemini.
 - For a public production deployment, use HTTPS and consider adding rate limiting, upload limits, and a stronger admin identity/session system.
 - This project uses a simple server-side admin token for the admin panel. It is suitable as a starter project, not a replacement for a full identity provider.
 
