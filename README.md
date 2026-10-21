@@ -14,6 +14,7 @@ A full-stack question-paper library built with React + Vite, Node.js + Express, 
 - Uploads are protected against duplicate titles, including older papers that were added before duplicate tracking was enabled.
 - Admin upload/delete routes are protected by a server-side password.
 - Admin can turn maintenance mode on or off. When enabled, the public website shows a maintenance screen and public paper APIs are blocked; admin access remains available.
+- Admin can turn missing-paper requests on or off. When enabled, students see an animated navbar ticker and can submit requests for papers that are not available.
 - Files are uploaded to Cloudinary; metadata is stored in MongoDB.
 
 ## Requirements

@@ -6,6 +6,7 @@ import papersRouter from "./routes/papers.js";
 import adminRouter from "./routes/admin.js";
 import SiteSettings from "./models/SiteSettings.js";
 import { maintenanceGuard } from "./middleware/maintenance.js";
+import requestsRouter from "./routes/requests.js";
 
 
 const app = express();
@@ -20,11 +21,12 @@ app.use(express.json({ limit: "1mb" }));
 app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "B.Tech CSE Paper Hub API" }));
 app.get("/api/status", async (_req, res, next) => {
   try {
-    const settings = await SiteSettings.findOne({ key: "site" }).select("maintenanceMode").lean();
-    res.json({ maintenanceMode: Boolean(settings?.maintenanceMode) });
+    const settings = await SiteSettings.findOne({ key: "site" }).select("maintenanceMode missingRequestEnabled").lean();
+    res.json({ maintenanceMode: Boolean(settings?.maintenanceMode), missingRequestEnabled: Boolean(settings?.missingRequestEnabled) });
   } catch (err) { next(err); }
 });
 app.use("/api/papers", maintenanceGuard, papersRouter);
+app.use("/api/requests", requestsRouter);
 app.use("/api/admin", adminRouter);
 
 app.use((err, _req, res, _next) => {

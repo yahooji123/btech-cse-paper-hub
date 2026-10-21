@@ -7,6 +7,7 @@ import cloudinary from "../config/cloudinary.js";
 import { requireAdmin } from "../middleware/adminAuth.js";
 import { extractPaperDetails } from "../config/gemini.js";
 import SiteSettings from "../models/SiteSettings.js";
+import PaperRequest from "../models/PaperRequest.js";
 
 const router = Router();
 const loginLimiter = rateLimit({
@@ -129,6 +130,43 @@ router.patch("/maintenance", requireAdmin, async (req, res, next) => {
       { new: true, upsert: true, runValidators: true }
     ).select("maintenanceMode").lean();
     res.json({ maintenanceMode: settings.maintenanceMode });
+  } catch (err) { next(err); }
+});
+
+router.get("/request-settings", requireAdmin, async (_req, res, next) => {
+  try {
+    const settings = await SiteSettings.findOne({ key: "site" }).select("missingRequestEnabled").lean();
+    res.json({ missingRequestEnabled: Boolean(settings?.missingRequestEnabled) });
+  } catch (err) { next(err); }
+});
+
+router.patch("/request-settings", requireAdmin, async (req, res, next) => {
+  try {
+    if (typeof req.body?.missingRequestEnabled !== "boolean") {
+      return res.status(400).json({ message: "missingRequestEnabled must be a boolean." });
+    }
+    const settings = await SiteSettings.findOneAndUpdate(
+      { key: "site" },
+      { $set: { missingRequestEnabled: req.body.missingRequestEnabled }, $setOnInsert: { key: "site" } },
+      { new: true, upsert: true, runValidators: true }
+    ).select("missingRequestEnabled").lean();
+    res.json({ missingRequestEnabled: settings.missingRequestEnabled });
+  } catch (err) { next(err); }
+});
+
+router.get("/paper-requests", requireAdmin, async (_req, res, next) => {
+  try {
+    const requests = await PaperRequest.find().sort({ createdAt: -1 }).limit(200).lean();
+    res.json({ requests });
+  } catch (err) { next(err); }
+});
+
+router.delete("/paper-requests/:id", requireAdmin, async (req, res, next) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: "Invalid request ID." });
+    const deleted = await PaperRequest.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ message: "Paper request not found." });
+    res.json({ message: "Paper request deleted." });
   } catch (err) { next(err); }
 });
 
