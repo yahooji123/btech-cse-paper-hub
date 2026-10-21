@@ -2,7 +2,7 @@ import { Router } from "express";
 import mongoose from "mongoose";
 import Paper from "../models/Paper.js";
 import rateLimit from "express-rate-limit";
-import { askPaperQuestionGroq } from "../config/gemini.js";
+import { askPaperQuestionGroq, searchEducationalImages } from "../config/gemini.js";
 import SiteSettings from "../models/SiteSettings.js";
 
 const router = Router();
@@ -11,7 +11,12 @@ const MAX_AI_QUESTIONS_PER_PAPER = 15;
 
 function normalizePaper(paper) {
   const semesters = paper.semesters?.length ? paper.semesters : [paper.semester];
-  return { ...paper, semesters, semester: semesters[0] };
+  return {
+    ...paper,
+    semesters,
+    semester: semesters[0],
+    remainingQuestions: Math.max(0, MAX_AI_QUESTIONS_PER_PAPER - (paper.aiQuestionCount || 0)),
+  };
 }
 
 router.get("/", async (req, res, next) => {
@@ -83,7 +88,11 @@ router.post("/:id/ai-chat", aiChatLimiter, async (req, res, next) => {
       mimetype: paper.mimeType || fileResponse.headers.get("content-type") || "application/pdf",
       title: paper.title,
     }, question, req.body?.history);
-    res.json({ answer, remainingQuestions: MAX_AI_QUESTIONS_PER_PAPER - paper.aiQuestionCount });
+    const imageGroups = await searchEducationalImages(question);
+    const images = imageGroups.flatMap(group => group.images || [])
+      .filter((image, index, all) => all.findIndex(item => item.url === image.url) === index)
+      .slice(0, 8);
+    res.json({ answer, images, remainingQuestions: MAX_AI_QUESTIONS_PER_PAPER - paper.aiQuestionCount });
   } catch (err) {
     if (reserved) {
       try {

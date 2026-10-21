@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { BookOpen, Search, Download, Eye, ShieldCheck, UploadCloud, X, FileText, Image as ImageIcon, Trash2, Pencil, GraduationCap, Filter, LockKeyhole, RefreshCw, ExternalLink, Power, Megaphone, Send, Star, Bot, ArrowUp, Moon, Sun } from "lucide-react";
+import mermaid from "mermaid";
+import { BookOpen, Search, Download, Eye, ShieldCheck, UploadCloud, X, FileText, Image as ImageIcon, Trash2, Pencil, GraduationCap, Filter, LockKeyhole, RefreshCw, ExternalLink, Power, Megaphone, Send, Star, Bot, ArrowUp, Moon, Sun, Maximize2, Minimize2 } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/$/, "");
 const emptyForm = { title: "", semesters: ["1"], subject: "", subjectCode: "", examType: "MTE", academicYear: "2025" };
@@ -23,6 +24,82 @@ function isRecentlyAdded(createdAt) {
   if (!createdAt) return false;
   const createdTime = new Date(createdAt).getTime();
   return Number.isFinite(createdTime) && Date.now() - createdTime <= 3 * 24 * 60 * 60 * 1000;
+}
+function MermaidDiagram({ chart, darkMode }) {
+  const [svg, setSvg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    const renderDiagram = async () => {
+      setError("");
+      try {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "base",
+          securityLevel: "strict",
+          htmlLabels: false,
+          flowchart: { htmlLabels: false, useMaxWidth: true, nodeSpacing: 55, rankSpacing: 65, padding: 18 },
+          themeVariables: darkMode
+            ? {
+                background: "#111827",
+                primaryColor: "#263b68",
+                primaryTextColor: "#f8fafc",
+                primaryBorderColor: "#8ea7e8",
+                lineColor: "#b8c7e8",
+                secondaryColor: "#1d3158",
+                tertiaryColor: "#17233d",
+                edgeLabelBackground: "#111827",
+                fontFamily: "DM Sans, Arial, sans-serif",
+                fontSize: "16px",
+              }
+            : {
+                background: "#fbfcff",
+                primaryColor: "#e7edff",
+                primaryTextColor: "#17213a",
+                primaryBorderColor: "#3157d5",
+                lineColor: "#52617a",
+                secondaryColor: "#f2f5ff",
+                tertiaryColor: "#ffffff",
+                edgeLabelBackground: "#fbfcff",
+                fontFamily: "DM Sans, Arial, sans-serif",
+                fontSize: "16px",
+              },
+        });
+        const id = `paperhub-mermaid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const result = await mermaid.render(id, chart.trim());
+        if (active) setSvg(result.svg);
+      } catch {
+        if (active) {
+          setSvg("");
+          setError("This diagram could not be rendered.");
+        }
+      }
+    };
+    renderDiagram();
+    return () => { active = false; };
+  }, [chart, darkMode]);
+
+  if (error) return <pre className="mermaid-fallback">{chart}</pre>;
+  if (!svg) return <div className="mermaid-loading">Preparing diagram…</div>;
+  return <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: svg }} aria-label="Generated educational diagram" />;
+}
+function EducationalImageGallery({ images = [], query = "" }) {
+  const [failedImages, setFailedImages] = useState([]);
+  useEffect(() => {
+    setFailedImages([]);
+  }, [images]);
+  const visibleImages = images.filter(image => image?.url && !failedImages.includes(image.url));
+  if (!visibleImages.length) return null;
+  const handleImageError = url => setFailedImages(current => [...new Set([...current, url])]);
+  return <div className="ai-image-gallery" aria-label="Related educational images">
+    <div className="ai-image-gallery-title"><ImageIcon size={14} /> Visual aid{query ? ` · ${query}` : ""}</div>
+    <div className="ai-image-grid">{visibleImages.map((image, index) => <a className="ai-image-card" href={image.sourceUrl} target="_blank" rel="noreferrer" key={`${image.url}-${index}`}>
+      <img src={image.url} alt={image.title || "Educational visual aid"} loading="lazy" referrerPolicy="no-referrer" onError={() => handleImageError(image.url)} />
+      <span>{image.title || "Educational visual aid"}</span>
+    </a>)}</div>
+    <small>Images from Wikimedia Commons · Open an image to view its source.</small>
+  </div>;
 }
 function PreviewModal({ paper, onClose, onDownloaded }) {
   useEffect(() => {
@@ -63,20 +140,35 @@ function PaperAiModal({ paper, onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [darkMode, setDarkMode] = useState(false);
+  const [fullScreen, setFullScreen] = useState(false);
+  const [remainingQuestions, setRemainingQuestions] = useState(paper.remainingQuestions ?? Math.max(0, 15 - (paper.aiQuestionCount || 0)));
   async function ask(e) {
     e.preventDefault();
-    if (!question.trim() || busy) return;
+    if (!question.trim() || busy || remainingQuestions === 0) return;
     const text = question.trim();
     const history = messages.slice(-8);
     setMessages(current => [...current, { role: "user", text }]);
     setQuestion(""); setBusy(true); setError("");
     try {
       const data = await request(`/papers/${paper._id}/ai-chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: text, history }) });
-      setMessages(current => [...current, { role: "model", text: data.answer }]);
+      setMessages(current => [...current, { role: "model", text: data.answer, images: data.images || [] }]);
+      setRemainingQuestions(data.remainingQuestions);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
   useEffect(() => { const key = e => e.key === "Escape" && onClose(); window.addEventListener("keydown", key); return () => window.removeEventListener("keydown", key); }, [onClose]);
-  return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}><section className={`ai-chat-modal${darkMode ? " dark" : ""}`} role="dialog" aria-modal="true" aria-label="Ask AI about paper"><header className="modal-head"><div className="ai-chat-title"><span className="ai-chat-icon"><Bot size={19} /></span><div><span className="eyebrow">PAPER AI</span><h2>Ask about this paper</h2><p>{paper.title}</p></div></div><div className="ai-chat-controls"><button className="icon-btn" onClick={() => setDarkMode(value => !value)} aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}>{darkMode ? <Sun /> : <Moon />}</button><button className="icon-btn" onClick={onClose} aria-label="Close AI chat"><X /></button></div></header><div className="ai-chat-messages">{messages.map((message, index) => <div className={`ai-message ${message.role}`} key={`${message.role}-${index}`}><span>{message.role === "model" ? <Bot size={14} /> : "You"}</span>{message.role === "model" ? <div className="ai-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown></div> : <p>{message.text}</p>}</div>)}{busy && <div className="ai-message model"><span><Bot size={14} /></span><p className="ai-typing">Thinking<span>.</span><span>.</span><span>.</span></p></div>}{error && <div className="alert error">{error}</div>}</div><form className="ai-chat-input" onSubmit={ask}><input value={question} onChange={e => setQuestion(e.target.value)} placeholder="Ask about topics, questions, or preparation..." maxLength="1000" aria-label="Ask a question" /><button className="button primary" disabled={busy || !question.trim()} aria-label="Send question"><ArrowUp size={17} /></button></form></section></div>;
+  const markdownComponents = {
+    code({ className, children, ...props }) {
+      const language = /language-(\w+)/.exec(className || "")?.[1];
+      const chart = String(children).replace(/\n$/, "");
+      return language === "mermaid"
+        ? <MermaidDiagram chart={chart} darkMode={darkMode} />
+        : <code className={className} {...props}>{children}</code>;
+    },
+  };
+  const renderAssistantAnswer = message => {
+    return <><EducationalImageGallery images={message.images} /><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message.text}</ReactMarkdown></>;
+  };
+  return <div className={`modal-backdrop${fullScreen ? " ai-fullscreen-backdrop" : ""}`} onMouseDown={e => e.target === e.currentTarget && onClose()}><section className={`ai-chat-modal${darkMode ? " dark" : ""}${fullScreen ? " full-screen" : ""}`} role="dialog" aria-modal="true" aria-label="Ask AI about paper"><header className="modal-head"><div className="ai-chat-title"><span className="ai-chat-icon"><Bot size={19} /></span><div><span className="eyebrow">PAPER AI</span><h2>Ask about this paper</h2><p>{paper.title}</p></div></div><div className="ai-chat-controls"><span className="ai-remaining" aria-live="polite">{remainingQuestions} {remainingQuestions === 1 ? "question" : "questions"} left</span><button className="icon-btn" onClick={() => setFullScreen(value => !value)} aria-label={fullScreen ? "Exit full screen" : "Open full screen"} title={fullScreen ? "Exit full screen" : "Open full screen"}>{fullScreen ? <Minimize2 /> : <Maximize2 />}</button><button className="icon-btn" onClick={() => setDarkMode(value => !value)} aria-label={darkMode ? "Switch to light mode" : "Switch to black theme"} title={darkMode ? "Switch to light theme" : "Switch to black theme"}>{darkMode ? <Sun /> : <Moon />}</button><button className="icon-btn" onClick={onClose} aria-label="Close AI chat"><X /></button></div></header><div className="ai-chat-messages">{messages.map((message, index) => <div className={`ai-message ${message.role}`} key={`${message.role}-${index}`}><span>{message.role === "model" ? <Bot size={14} /> : "You"}</span>{message.role === "model" ? renderAssistantAnswer(message) : <p>{message.text}</p>}</div>)}{busy && <div className="ai-message model"><span><Bot size={14} /></span><p className="ai-typing">Thinking<span>.</span><span>.</span><span>.</span></p></div>}{error && <div className="alert error">{error}</div>}</div><form className="ai-chat-input" onSubmit={ask}><input value={question} onChange={e => setQuestion(e.target.value)} placeholder={remainingQuestions ? "Ask about topics, questions, or preparation..." : "No questions left for this paper"} maxLength="1000" aria-label="Ask a question" disabled={remainingQuestions === 0} /><button className="button primary" disabled={busy || !question.trim() || remainingQuestions === 0} aria-label="Send question"><ArrowUp size={17} /></button></form></section></div>;
 }
 function MissingRequestModal({ onClose }) {
   const [form, setForm] = useState({ subject: "", semester: "1", examType: "MTE", academicYear: "2025", note: "" });
@@ -312,6 +404,7 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
   </div>;
 }
 export default function App() {
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("paperhub-theme") === "dark");
   const [papers, setPapers] = useState([]);
   const [meta, setMeta] = useState({ semesters: [], years: [], total: 0, totalDownloads: 0 });
   const [loading, setLoading] = useState(true);
@@ -354,11 +447,14 @@ export default function App() {
     request("/status").then(data => { setMaintenanceMode(data.maintenanceMode); setMissingRequestEnabled(data.missingRequestEnabled); setAnnouncementEnabled(data.announcementEnabled); setAnnouncementText(data.announcementText); setFeedbackEnabled(data.feedbackEnabled); setAiChatEnabled(data.aiChatEnabled); }).catch(() => {});
   }, []);
   useEffect(() => { const id = setTimeout(loadPapers, 250); return () => clearTimeout(id); }, [q, semester, examType, year, fileType]);
+  useEffect(() => {
+    localStorage.setItem("paperhub-theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
   const resetFilters = () => { setQ(""); setSemester(""); setExamType(""); setYear(""); setFileType(""); };
   const groupedCount = useMemo(() => papers.length, [papers]);
-  return <div className="app-shell">
+  return <div className={`app-shell${darkMode ? " dark-theme" : ""}`}>
     <div className="top-strip"><div className="container top-strip-inner"><span><span className="status-dot"></span> Student access is open — no account required</span><span>Built for B.Tech CSE students</span></div></div>
-    <header className="site-header"><div className="container nav-inner"><a className="brand" href="#"><span className="brand-mark"><GraduationCap size={25} /></span><span><b>Paper<span>Hub</span></b><small>B.TECH CSE LIBRARY</small></span></a><nav><a href="#library">Question papers</a><a href="#how">How it works</a><button className="button admin-button maintenance-admin-trigger" onClick={() => setAdminOpen(true)}><ShieldCheck size={16} /> Admin</button></nav></div>{announcementEnabled && announcementText && <div className="announcement-ticker"><div className="announcement-ticker-track"><span><Megaphone size={14} /> {announcementText}</span><span><Megaphone size={14} /> {announcementText}</span></div></div>}{missingRequestEnabled && <div className="request-ticker"><div className="request-ticker-track"><span><Megaphone size={14} /> Can't find a paper? <button onClick={() => setRequestOpen(true)}>Request it from admin</button></span><span><Megaphone size={14} /> Missing paper request is open <button onClick={() => setRequestOpen(true)}>Send your request</button></span></div></div>}</header>
+    <header className="site-header"><div className="container nav-inner"><a className="brand" href="#"><span className="brand-mark"><GraduationCap size={25} /></span><span><b>Paper<span>Hub</span></b><small>B.TECH CSE LIBRARY</small></span></a><nav><a href="#library">Question papers</a><a href="#how">How it works</a><button className="theme-toggle" onClick={() => setDarkMode(value => !value)} aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"} title={darkMode ? "Switch to light mode" : "Switch to dark mode"}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}<span>{darkMode ? "Light" : "Dark"}</span></button><button className="button admin-button maintenance-admin-trigger" onClick={() => setAdminOpen(true)}><ShieldCheck size={16} /> Admin</button></nav></div>{announcementEnabled && announcementText && <div className="announcement-ticker"><div className="announcement-ticker-track"><span><Megaphone size={14} /> {announcementText}</span><span><Megaphone size={14} /> {announcementText}</span></div></div>}{missingRequestEnabled && <div className="request-ticker"><div className="request-ticker-track"><span><Megaphone size={14} /> Can't find a paper? <button onClick={() => setRequestOpen(true)}>Request it from admin</button></span><span><Megaphone size={14} /> Missing paper request is open <button onClick={() => setRequestOpen(true)}>Send your request</button></span></div></div>}</header>
     <main>
       <section className="hero"><div className="hero-grid"></div><div className="container hero-content"><div className="hero-copy"><div className="eyebrow hero-eyebrow"><span></span> YOUR SEMESTER. YOUR RESOURCES.</div><h1>Past papers.<br /><em>Better preparation.</em></h1><p>Find, preview, and practice with B.Tech CSE MTE and ETE question papers — organized by semester, subject, and academic year.</p><div className="hero-actions"><a className="button white-button" href="#library">Explore papers <span>↓</span></a><span className="hero-note"><ShieldCheck size={16} /> Free access · No login</span></div></div><div className="hero-card"><div className="hero-card-top"><span className="mini-label">PAPER LIBRARY</span><BookOpen size={20} /></div><div className="hero-stat-row"><div className="hero-stat">{meta.total ?? 0}<span> papers available</span></div><div className="download-stat"><Download size={17} /><b>{formatCount(meta.totalDownloads ?? 0)}</b><span>total downloads</span></div></div><div className="semester-mini-grid">{[1, 2, 3, 4, 5, 6, 7, 8].map(n => <div key={n}><span>SEM</span><b>{String(n).padStart(2, "0")}</b></div>)}</div><div className="hero-card-foot"><span className="green-pulse"></span> PDFs &amp; images · In-browser preview</div></div></div><div className="container hero-bottom"><span>01 / BROWSE</span><span>02 / PREVIEW</span><span>03 / PREPARE</span></div></section>
       <section className="container library-section" id="library">
