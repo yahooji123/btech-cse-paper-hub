@@ -20,6 +20,7 @@ const paperSchema = new mongoose.Schema(
     mimeType: { type: String, required: true },
     bytes: { type: Number, default: 0 },
     downloadCount: { type: Number, default: 0, min: 0 },
+    aiQuestionCount: { type: Number, default: 0, min: 0, max: 15 },
   },
   { timestamps: true }
 );

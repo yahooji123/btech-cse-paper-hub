@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, Search, Download, Eye, ShieldCheck, UploadCloud, X, FileText, Image as ImageIcon, Trash2, Pencil, GraduationCap, Filter, LockKeyhole, RefreshCw, ExternalLink, Power, Megaphone, Send, Star } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { BookOpen, Search, Download, Eye, ShieldCheck, UploadCloud, X, FileText, Image as ImageIcon, Trash2, Pencil, GraduationCap, Filter, LockKeyhole, RefreshCw, ExternalLink, Power, Megaphone, Send, Star, Bot, ArrowUp, Moon, Sun } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/$/, "");
 const emptyForm = { title: "", semesters: ["1"], subject: "", subjectCode: "", examType: "MTE", academicYear: "2025" };
@@ -55,6 +57,27 @@ function FeedbackModal({ paper, onClose }) {
   }
   return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}><section className="feedback-modal" role="dialog" aria-modal="true" aria-label="Share feedback"><header className="modal-head"><div><span className="eyebrow">QUICK FEEDBACK</span><h2>How was this paper?</h2><p>Your feedback helps us improve PaperHub.</p></div><button className="icon-btn" onClick={onClose} aria-label="Close feedback"><X /></button></header>{result ? <div className="feedback-success"><Star size={30} /><h3>Thank you!</h3><p>{result}</p><button className="button primary" onClick={onClose}>Done</button></div> : <form className="feedback-form" onSubmit={submit}><div className="rating-picker" aria-label="Rating">{[1, 2, 3, 4, 5].map(value => <button type="button" key={value} className={value <= rating ? "selected" : ""} onClick={() => setRating(value)} aria-label={`${value} star rating`}><Star size={29} fill="currentColor" /></button>)}</div><p className="rating-label">{rating ? `${rating} out of 5 stars` : "Select a rating"}</p><label>Message <span className="muted">(optional)</span><textarea value={message} onChange={e => setMessage(e.target.value)} maxLength="500" placeholder="Tell us what you think about this paper..." /></label>{(error) && <div className="alert error">{error}</div>}<button className="button primary full" disabled={busy || !rating}>{busy ? "Sending…" : "Send feedback"}</button></form>}</section></div>;
 }
+function PaperAiModal({ paper, onClose }) {
+  const [messages, setMessages] = useState([{ role: "model", text: `Hi! Ask me anything about "${paper.title}". I’ll answer using this paper.` }]);
+  const [question, setQuestion] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [darkMode, setDarkMode] = useState(false);
+  async function ask(e) {
+    e.preventDefault();
+    if (!question.trim() || busy) return;
+    const text = question.trim();
+    const history = messages.slice(-8);
+    setMessages(current => [...current, { role: "user", text }]);
+    setQuestion(""); setBusy(true); setError("");
+    try {
+      const data = await request(`/papers/${paper._id}/ai-chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: text, history }) });
+      setMessages(current => [...current, { role: "model", text: data.answer }]);
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  useEffect(() => { const key = e => e.key === "Escape" && onClose(); window.addEventListener("keydown", key); return () => window.removeEventListener("keydown", key); }, [onClose]);
+  return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}><section className={`ai-chat-modal${darkMode ? " dark" : ""}`} role="dialog" aria-modal="true" aria-label="Ask AI about paper"><header className="modal-head"><div className="ai-chat-title"><span className="ai-chat-icon"><Bot size={19} /></span><div><span className="eyebrow">PAPER AI</span><h2>Ask about this paper</h2><p>{paper.title}</p></div></div><div className="ai-chat-controls"><button className="icon-btn" onClick={() => setDarkMode(value => !value)} aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}>{darkMode ? <Sun /> : <Moon />}</button><button className="icon-btn" onClick={onClose} aria-label="Close AI chat"><X /></button></div></header><div className="ai-chat-messages">{messages.map((message, index) => <div className={`ai-message ${message.role}`} key={`${message.role}-${index}`}><span>{message.role === "model" ? <Bot size={14} /> : "You"}</span>{message.role === "model" ? <div className="ai-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown></div> : <p>{message.text}</p>}</div>)}{busy && <div className="ai-message model"><span><Bot size={14} /></span><p className="ai-typing">Thinking<span>.</span><span>.</span><span>.</span></p></div>}{error && <div className="alert error">{error}</div>}</div><form className="ai-chat-input" onSubmit={ask}><input value={question} onChange={e => setQuestion(e.target.value)} placeholder="Ask about topics, questions, or preparation..." maxLength="1000" aria-label="Ask a question" /><button className="button primary" disabled={busy || !question.trim()} aria-label="Send question"><ArrowUp size={17} /></button></form></section></div>;
+}
 function MissingRequestModal({ onClose }) {
   const [form, setForm] = useState({ subject: "", semester: "1", examType: "MTE", academicYear: "2025", note: "" });
   const [busy, setBusy] = useState(false);
@@ -74,7 +97,7 @@ function MissingRequestModal({ onClose }) {
     </section>
   </div>;
 }
-function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSettingChanged, onAnnouncementChanged, onFeedbackSettingChanged }) {
+function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSettingChanged, onAnnouncementChanged, onFeedbackSettingChanged, onAiChatSettingChanged }) {
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
   const [form, setForm] = useState(emptyForm);
@@ -96,6 +119,8 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
   const [feedbackEnabled, setFeedbackEnabled] = useState(false);
   const [feedbackBusy, setFeedbackBusy] = useState(false);
   const [feedback, setFeedback] = useState([]);
+  const [aiChatEnabled, setAiChatEnabled] = useState(false);
+  const [aiChatBusy, setAiChatBusy] = useState(false);
 
   async function unlock(e) {
     e.preventDefault(); setBusy(true); setError(""); setMessage("");
@@ -118,9 +143,10 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
       request("/admin/request-settings", { headers: { Authorization: "Bearer " + token } }),
       request("/admin/announcement", { headers: { Authorization: "Bearer " + token } }),
       request("/admin/feedback-settings", { headers: { Authorization: "Bearer " + token } }),
+      request("/admin/ai-chat-settings", { headers: { Authorization: "Bearer " + token } }),
       request("/admin/feedback", { headers: { Authorization: "Bearer " + token } }),
       request("/admin/paper-requests", { headers: { Authorization: "Bearer " + token } }),
-    ]).then(([settings, announcement, feedbackSettings, feedbackData, data]) => { setRequestEnabled(settings.missingRequestEnabled); setAnnouncementEnabled(announcement.announcementEnabled); setAnnouncementText(announcement.announcementText); setFeedbackEnabled(feedbackSettings.feedbackEnabled); setFeedback(feedbackData.feedback); setRequests(data.requests); }).catch(err => setError(err.message));
+    ]).then(([settings, announcement, feedbackSettings, aiChatSettings, feedbackData, data]) => { setRequestEnabled(settings.missingRequestEnabled); setAnnouncementEnabled(announcement.announcementEnabled); setAnnouncementText(announcement.announcementText); setFeedbackEnabled(feedbackSettings.feedbackEnabled); setAiChatEnabled(aiChatSettings.aiChatEnabled); setFeedback(feedbackData.feedback); setRequests(data.requests); }).catch(err => setError(err.message));
   }, [token]);
   async function toggleMaintenance() {
     const nextMode = !maintenanceMode;
@@ -176,6 +202,15 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
       setFeedbackEnabled(data.feedbackEnabled); onFeedbackSettingChanged(data.feedbackEnabled);
       setMessage(data.feedbackEnabled ? "Feedback card will open after downloads." : "Feedback card is hidden from students.");
     } catch (err) { setError(err.message); } finally { setFeedbackBusy(false); }
+  }
+  async function toggleAiChat() {
+    const nextEnabled = !aiChatEnabled;
+    setAiChatBusy(true); setError(""); setMessage("");
+    try {
+      const data = await request("/admin/ai-chat-settings", { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify({ aiChatEnabled: nextEnabled }) });
+      setAiChatEnabled(data.aiChatEnabled); onAiChatSettingChanged(data.aiChatEnabled);
+      setMessage(data.aiChatEnabled ? "Paper AI chat is now visible to students." : "Paper AI chat is hidden from students.");
+    } catch (err) { setError(err.message); } finally { setAiChatBusy(false); }
   }
   async function deleteFeedback(item) {
     if (!confirm("Delete this feedback?")) return;
@@ -253,6 +288,7 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
           <div className={`maintenance-control request-control ${requestEnabled ? "active" : ""}`}><div><b>{requestEnabled ? "Missing paper requests are ON" : "Missing paper requests are OFF"}</b><span>{requestEnabled ? "Students can request unavailable papers from the navbar ticker." : "The request button and ticker are hidden from students."}</span></div><button type="button" className={`button ${requestEnabled ? "maintenance-off" : "maintenance-on"}`} onClick={toggleRequests} disabled={requestBusy}><Megaphone size={15} />{requestBusy ? "Updating…" : requestEnabled ? "Turn off" : "Turn on"}</button></div>
           <div className={`announcement-editor ${announcementEnabled ? "active" : ""}`}><div className="announcement-editor-head"><div><b>Website announcement</b><span>Paste any notice for students, such as new paper uploads or important updates.</span></div><label className="announcement-switch"><input type="checkbox" checked={announcementEnabled} onChange={e => setAnnouncementEnabled(e.target.checked)} /><span>{announcementEnabled ? "Visible" : "Hidden"}</span></label></div><textarea value={announcementText} onChange={e => setAnnouncementText(e.target.value)} maxLength="500" placeholder="e.g. New Semester 5 DBMS papers have been added. Check them out now!" /><div className="announcement-editor-footer"><small>{announcementText.length}/500 characters</small><button type="button" className="button primary" onClick={saveAnnouncement} disabled={announcementBusy || (announcementEnabled && !announcementText.trim())}><Megaphone size={15} />{announcementBusy ? "Saving…" : "Save announcement"}</button></div></div>
           <div className={`maintenance-control feedback-control ${feedbackEnabled ? "active" : ""}`}><div><b>{feedbackEnabled ? "Download feedback is ON" : "Download feedback is OFF"}</b><span>{feedbackEnabled ? "Students see a rating card after downloading a paper." : "The feedback card is hidden from students."}</span></div><button type="button" className={`button ${feedbackEnabled ? "maintenance-off" : "maintenance-on"}`} onClick={toggleFeedback} disabled={feedbackBusy}><Star size={15} />{feedbackBusy ? "Updating…" : feedbackEnabled ? "Turn off" : "Turn on"}</button></div>
+          <div className={`maintenance-control feedback-control ${aiChatEnabled ? "active" : ""}`}><div><b>{aiChatEnabled ? "Paper AI chat is ON" : "Paper AI chat is OFF"}</b><span>{aiChatEnabled ? "Students can see Ask AI on paper cards." : "Ask AI is hidden from students."}</span></div><button type="button" className={`button ${aiChatEnabled ? "maintenance-off" : "maintenance-on"}`} onClick={toggleAiChat} disabled={aiChatBusy}><Bot size={15} />{aiChatBusy ? "Updating…" : aiChatEnabled ? "Hide chat" : "Show chat"}</button></div>
           <div className="admin-feedback"><div className="admin-list-head"><h3>Student feedback <span className="count">{feedback.length}</span></h3><button className="button subtle" onClick={() => request("/admin/feedback", { headers: { Authorization: "Bearer " + token } }).then(data => setFeedback(data.feedback)).catch(err => setError(err.message))}><RefreshCw size={15} /> Refresh</button></div>{feedback.length === 0 ? <p className="muted">No feedback received yet.</p> : <div className="feedback-list">{feedback.map(item => <div className="feedback-item" key={item._id}><div><b>{item.paperTitle || "Paper feedback"} · {"★".repeat(item.rating)}{"☆".repeat(5 - item.rating)}</b>{item.message && <span>{item.message}</span>}<small>{new Date(item.createdAt).toLocaleDateString()}</small></div><button className="icon-btn danger-icon" title="Delete feedback" onClick={() => deleteFeedback(item)} disabled={busy}><Trash2 size={15} /></button></div>)}</div>}</div>
           <div className="admin-requests"><div className="admin-list-head"><h3>Missing paper requests <span className="count">{requests.length}</span></h3><button className="button subtle" onClick={() => request("/admin/paper-requests", { headers: { Authorization: "Bearer " + token } }).then(data => setRequests(data.requests)).catch(err => setError(err.message))}><RefreshCw size={15} /> Refresh</button></div>{requests.length === 0 ? <p className="muted">No student requests yet.</p> : <div className="request-list">{requests.map(item => <div className="request-item" key={item._id}><div><b>{item.subject}</b><span>Semester {item.semester} · {item.examType} · {item.academicYear}</span>{item.note && <small>{item.note}</small>}</div><time>{new Date(item.createdAt).toLocaleDateString()}</time><button className="icon-btn danger-icon" title="Remove request" aria-label={`Remove request for ${item.subject}`} onClick={() => deleteRequest(item)} disabled={busy}><Trash2 size={15} /></button></div>)}</div>}</div>
           <form className="admin-form" onSubmit={savePaper}>
@@ -291,7 +327,9 @@ export default function App() {
   const [missingRequestEnabled, setMissingRequestEnabled] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
   const [feedbackEnabled, setFeedbackEnabled] = useState(false);
+  const [aiChatEnabled, setAiChatEnabled] = useState(false);
   const [feedbackPaper, setFeedbackPaper] = useState(null);
+  const [aiPaper, setAiPaper] = useState(null);
   const [announcementEnabled, setAnnouncementEnabled] = useState(false);
   const [announcementText, setAnnouncementText] = useState("");
 
@@ -313,7 +351,7 @@ export default function App() {
   }
   useEffect(() => { loadMeta(); }, []);
   useEffect(() => {
-    request("/status").then(data => { setMaintenanceMode(data.maintenanceMode); setMissingRequestEnabled(data.missingRequestEnabled); setAnnouncementEnabled(data.announcementEnabled); setAnnouncementText(data.announcementText); setFeedbackEnabled(data.feedbackEnabled); }).catch(() => {});
+    request("/status").then(data => { setMaintenanceMode(data.maintenanceMode); setMissingRequestEnabled(data.missingRequestEnabled); setAnnouncementEnabled(data.announcementEnabled); setAnnouncementText(data.announcementText); setFeedbackEnabled(data.feedbackEnabled); setAiChatEnabled(data.aiChatEnabled); }).catch(() => {});
   }, []);
   useEffect(() => { const id = setTimeout(loadPapers, 250); return () => clearTimeout(id); }, [q, semester, examType, year, fileType]);
   const resetFilters = () => { setQ(""); setSemester(""); setExamType(""); setYear(""); setFileType(""); };
@@ -329,15 +367,16 @@ export default function App() {
         {error && <div className="error-banner"><b>Could not load papers.</b><span>{error}</span><button className="button outline" onClick={() => { loadMeta(); loadPapers(); }}>Try again</button></div>}
         {loading ? <div className="empty-state"><div className="spinner"></div><h3>Loading paper library…</h3><p>Connecting to the paper collection.</p></div> :
           papers.length === 0 ? <div className="empty-state"><div className="empty-icon"><BookOpen size={28} /></div><h3>No papers found yet</h3><p>{error ? "Fix the API configuration and retry." : "Try changing your filters, or check back after the admin uploads papers."}</p>{!error && <button className="button outline" onClick={resetFilters}>Clear filters</button>}</div> :
-            <div className="paper-grid">{papers.map(p => <article className="paper-card" key={p._id}><div className="paper-card-art">{isRecentlyAdded(p.createdAt) && <span className="new-paper-badge">NEW</span>}<div className={`file-illustration ${p.fileType}`}><span className="file-corner"></span>{p.fileType === "pdf" ? <FileText size={35} /> : <ImageIcon size={35} />}<b>{p.fileType === "pdf" ? "PDF" : "IMAGE"}</b></div><div className="art-meta"><span className={`exam-tag ${p.examType.toLowerCase()}`}>{p.examType}</span><span>SEM {(p.semesters || [p.semester]).join(", ")}</span></div></div><div className="paper-card-body"><div className="year-row"><span>{p.academicYear}</span><span>{formatBytes(p.bytes)}</span></div><h3>{p.title}</h3><p className="subject-line">{p.subject}{p.subjectCode ? ` · ${p.subjectCode}` : ""}</p><div className="paper-card-actions"><button className="button primary" onClick={() => setPreview(p)}><Eye size={16} /> Preview</button><a className="button outline" href={`${API}/papers/${p._id}/download`} onClick={() => feedbackEnabled && setFeedbackPaper(p)}><Download size={16} /> Download</a></div><span className="download-count"><Download size={12} /> {p.downloadCount ?? 0} downloads</span></div></article>)}</div>}
+            <div className="paper-grid">{papers.map(p => <article className="paper-card" key={p._id}><div className="paper-card-art">{isRecentlyAdded(p.createdAt) && <span className="new-paper-badge">NEW</span>}<div className={`file-illustration ${p.fileType}`}><span className="file-corner"></span>{p.fileType === "pdf" ? <FileText size={35} /> : <ImageIcon size={35} />}<b>{p.fileType === "pdf" ? "PDF" : "IMAGE"}</b></div><div className="art-meta"><span className={`exam-tag ${p.examType.toLowerCase()}`}>{p.examType}</span><span>SEM {(p.semesters || [p.semester]).join(", ")}</span></div></div><div className="paper-card-body"><div className="year-row"><span>{p.academicYear}</span><span>{formatBytes(p.bytes)}</span></div><h3>{p.title}</h3><p className="subject-line">{p.subject}{p.subjectCode ? ` · ${p.subjectCode}` : ""}</p><div className="paper-card-actions"><button className="button primary" onClick={() => setPreview(p)}><Eye size={16} /> Preview</button>{aiChatEnabled && <button className="button ai-button" onClick={() => setAiPaper(p)}><Bot size={16} /> Ask AI</button>}<a className="button outline" href={`${API}/papers/${p._id}/download`} onClick={() => feedbackEnabled && setFeedbackPaper(p)}><Download size={16} /> Download</a></div><span className="download-count"><Download size={12} /> {p.downloadCount ?? 0} downloads</span></div></article>)}</div>}
       </section>
       <section className="how-section" id="how"><div className="container"><div className="eyebrow dark-eyebrow">SIMPLE BY DESIGN</div><h2>From search to <em>study mode.</em></h2><div className="steps"><div className="step"><span>01</span><Search /><h3>Find a paper</h3><p>Filter by semester, subject, MTE/ETE, and year to narrow your search.</p></div><div className="step"><span>02</span><Eye /><h3>Preview instantly</h3><p>Read PDFs and images in the website without downloading first.</p></div><div className="step"><span>03</span><Download /><h3>Practice your way</h3><p>Open or download a paper when you want an offline copy.</p></div></div></div></section>
     </main>
     <footer className="site-footer"><div className="container footer-inner"><a className="brand footer-brand" href="#"><span className="brand-mark"><GraduationCap size={22} /></span><span><b>Paper<span>Hub</span></b><small>B.TECH CSE LIBRARY</small></span></a><p>Built for students. Focused on preparation.</p><span>© {new Date().getFullYear()} PaperHub</span></div></footer>
     {preview && <PreviewModal paper={preview} onClose={() => setPreview(null)} onDownloaded={paper => feedbackEnabled && setFeedbackPaper(paper)} />}
     {feedbackPaper && <FeedbackModal paper={feedbackPaper} onClose={() => setFeedbackPaper(null)} />}
+    {aiPaper && <PaperAiModal paper={aiPaper} onClose={() => setAiPaper(null)} />}
     {maintenanceMode && <div className="maintenance-overlay" role="alert"><div className="maintenance-message"><Power size={30} /><span className="eyebrow">TEMPORARILY UNAVAILABLE</span><h1>Website under maintenance</h1><p>We are making a few improvements. Please check back shortly.</p><button className="button maintenance-access" onClick={() => setAdminOpen(true)}><ShieldCheck size={15} /> Admin access</button></div></div>}
     {requestOpen && <MissingRequestModal onClose={() => setRequestOpen(false)} />}
-    {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} onChanged={() => { loadMeta(); loadPapers(); }} onMaintenanceChanged={setMaintenanceMode} onRequestSettingChanged={setMissingRequestEnabled} onAnnouncementChanged={(enabled, text) => { setAnnouncementEnabled(enabled); setAnnouncementText(text); }} onFeedbackSettingChanged={setFeedbackEnabled} />}
+    {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} onChanged={() => { loadMeta(); loadPapers(); }} onMaintenanceChanged={setMaintenanceMode} onRequestSettingChanged={setMissingRequestEnabled} onAnnouncementChanged={(enabled, text) => { setAnnouncementEnabled(enabled); setAnnouncementText(text); }} onFeedbackSettingChanged={setFeedbackEnabled} onAiChatSettingChanged={setAiChatEnabled} />}
   </div>;
 }

@@ -8,6 +8,7 @@ const siteSettingsSchema = new mongoose.Schema(
     announcementEnabled: { type: Boolean, default: false },
     announcementText: { type: String, trim: true, maxlength: 500, default: "" },
     feedbackEnabled: { type: Boolean, default: false },
+    aiChatEnabled: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

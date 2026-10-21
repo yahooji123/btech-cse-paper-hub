@@ -1,8 +1,13 @@
 import { Router } from "express";
 import mongoose from "mongoose";
 import Paper from "../models/Paper.js";
+import rateLimit from "express-rate-limit";
+import { askPaperQuestionGroq } from "../config/gemini.js";
+import SiteSettings from "../models/SiteSettings.js";
 
 const router = Router();
+const aiChatLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false, message: { message: "Too many AI questions. Please try again later." } });
+const MAX_AI_QUESTIONS_PER_PAPER = 15;
 
 function normalizePaper(paper) {
   const semesters = paper.semesters?.length ? paper.semesters : [paper.semester];
@@ -47,6 +52,48 @@ router.get("/meta", async (_req, res, next) => {
     const allSemesters = [...new Set([...semesters, ...legacySemesters].filter(Number.isInteger))];
     res.json({ semesters: allSemesters.sort((a,b)=>a-b), years: years.sort().reverse(), subjects: subjects.sort(), total, totalDownloads: downloads[0]?.total || 0 });
   } catch (err) { next(err); }
+});
+
+router.post("/:id/ai-chat", aiChatLimiter, async (req, res, next) => {
+  let reserved = false;
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: "Invalid paper ID." });
+    const question = typeof req.body?.question === "string" ? req.body.question.trim().slice(0, 1000) : "";
+    if (!question) return res.status(400).json({ message: "Ask a question about this paper." });
+    const settings = await SiteSettings.findOne({ key: "site" }).select("aiChatEnabled").lean();
+    if (settings?.aiChatEnabled === false) return res.status(404).json({ message: "Paper AI chat is currently unavailable." });
+    const paper = await Paper.findOneAndUpdate(
+      { _id: req.params.id, $or: [{ aiQuestionCount: { $lt: MAX_AI_QUESTIONS_PER_PAPER } }, { aiQuestionCount: { $exists: false } }] },
+      { $inc: { aiQuestionCount: 1 } },
+      { new: true }
+    ).lean();
+    if (!paper) {
+      const exists = await Paper.exists({ _id: req.params.id });
+      return res.status(exists ? 429 : 404).json({ message: exists ? "This paper has reached its 15-question AI limit." : "Paper not found." });
+    }
+    reserved = true;
+    const fileResponse = await fetch(paper.fileUrl);
+    if (!fileResponse.ok) {
+      const error = new Error("The paper file could not be read for AI chat.");
+      error.statusCode = 502;
+      throw error;
+    }
+    const answer = await askPaperQuestionGroq({
+      buffer: Buffer.from(await fileResponse.arrayBuffer()),
+      mimetype: paper.mimeType || fileResponse.headers.get("content-type") || "application/pdf",
+      title: paper.title,
+    }, question, req.body?.history);
+    res.json({ answer, remainingQuestions: MAX_AI_QUESTIONS_PER_PAPER - paper.aiQuestionCount });
+  } catch (err) {
+    if (reserved) {
+      try {
+        await Paper.updateOne({ _id: req.params.id, aiQuestionCount: { $gt: 0 } }, { $inc: { aiQuestionCount: -1 } });
+      } catch (rollbackError) {
+        console.error("Failed to release reserved AI question slot:", rollbackError);
+      }
+    }
+    next(err);
+  }
 });
 
 router.get("/:id/download", async (req, res, next) => {

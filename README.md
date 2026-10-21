@@ -18,6 +18,9 @@ A full-stack question-paper library built with React + Vite, Node.js + Express, 
 - Admin can publish a custom announcement from the admin panel and show or hide it for visitors.
 - Admin can show or hide a post-download feedback card where students submit a rating and optional message.
 - Papers uploaded within the last 3 days automatically receive a `NEW` badge.
+- Students can open Paper AI on any paper and ask questions about its content and exam preparation.
+- Each paper allows a maximum of 15 AI questions in total across all users.
+- Admin can show or hide the Paper AI button from the admin panel.
 - Files are uploaded to Cloudinary; metadata is stored in MongoDB.
 
 ## Requirements
@@ -40,8 +43,9 @@ Edit `server/.env` and set:
 - `ADMIN_PASSWORD` (defaults to `admin@123` for local setup; change it before public deployment)
 - `ADMIN_SESSION_SECRET` (long random secret)
 - `GEMINI_API_KEY` (Google AI Studio API key for Smart Upload)
-- `GROQ_API_KEY` (optional fallback key; used automatically if Gemini fails, for image uploads)
-- `GROQ_MODEL` (optional Groq vision model; defaults to `qwen/qwen3.8-27b`)
+- `GROQ_API_KEY` (required for Paper AI chat; also used as the image-upload fallback when Gemini fails)
+- `GROQ_MODEL` (optional Groq vision model for upload fallback; defaults to `qwen/qwen3.8-27b`)
+- `GROQ_CHAT_MODEL` (optional Groq vision model for Paper AI chat; defaults to `GROQ_MODEL`)
 
 Install and run:
 ```bash

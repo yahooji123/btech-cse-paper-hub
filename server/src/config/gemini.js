@@ -60,6 +60,38 @@ export async function extractPaperDetails(file) {
   };
 }
 
+export async function askPaperQuestionGroq(file, question, history = []) {
+  if (!process.env.GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY is missing. AI chat is not configured.");
+  }
+  if (!file.mimetype.startsWith("image/")) {
+    const error = new Error("Groq chat currently supports image papers only. PDF chat will be added separately.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const safeHistory = Array.isArray(history)
+    ? history.filter(item => ["user", "model"].includes(item?.role) && typeof item?.text === "string").slice(-8)
+    : [];
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+    body: JSON.stringify({
+      model: process.env.GROQ_CHAT_MODEL || process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
+      temperature: 0.2,
+      messages: [
+        { role: "system", content: `You are PaperHub AI, an expert AI tutor and professional content formatter. Answer only questions related to the selected question paper, its visible questions, subjects, topics, or exam preparation based on it. If the answer is not present or cannot be inferred safely, say so clearly. Do not invent question text or marks. Use accurate, beginner-friendly answers in clean Markdown. Start substantial answers with a clear # heading and a 2-3 sentence introduction. Use ## main sections, ### subsections, short paragraphs, bullets, numbered steps, comparison tables when useful, bold key terms, inline code, and fenced code blocks with language identifiers. Use LaTeX for mathematical formulas when relevant. End educational explanations with ## Quick Revision and 3-5 concise bullet points. Do not return HTML, JSX, JSON, or wrap the entire answer in one code block. Keep answers focused and student-friendly.` },
+        ...safeHistory.map(item => ({ role: item.role === "model" ? "assistant" : "user", content: item.text })),
+        { role: "user", content: [{ type: "text", text: `The selected paper is "${file.title || "selected paper"}". Answer my latest question using this paper image.\n\nQuestion: ${question}` }, { type: "image_url", image_url: { url: `data:${file.mimetype};base64,${file.buffer.toString("base64")}` } }] },
+      ],
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`Groq chat failed: ${data.error?.message || response.statusText}`);
+  const answer = data.choices?.[0]?.message?.content?.trim();
+  if (!answer) throw new Error("Groq returned no answer.");
+  return answer;
+}
+
 async function extractWithGroq(file, geminiError) {
   if (!process.env.GROQ_API_KEY) {
     throw new Error(`Gemini extraction failed and GROQ_API_KEY is not configured: ${geminiError.message}`);

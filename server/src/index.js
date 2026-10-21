@@ -22,8 +22,8 @@ app.use(express.json({ limit: "1mb" }));
 app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "B.Tech CSE Paper Hub API" }));
 app.get("/api/status", async (_req, res, next) => {
   try {
-    const settings = await SiteSettings.findOne({ key: "site" }).select("maintenanceMode missingRequestEnabled announcementEnabled announcementText feedbackEnabled").lean();
-    res.json({ maintenanceMode: Boolean(settings?.maintenanceMode), missingRequestEnabled: Boolean(settings?.missingRequestEnabled), announcementEnabled: Boolean(settings?.announcementEnabled), announcementText: settings?.announcementText || "", feedbackEnabled: Boolean(settings?.feedbackEnabled) });
+    const settings = await SiteSettings.findOne({ key: "site" }).select("maintenanceMode missingRequestEnabled announcementEnabled announcementText feedbackEnabled aiChatEnabled").lean();
+    res.json({ maintenanceMode: Boolean(settings?.maintenanceMode), missingRequestEnabled: Boolean(settings?.missingRequestEnabled), announcementEnabled: Boolean(settings?.announcementEnabled), announcementText: settings?.announcementText || "", feedbackEnabled: Boolean(settings?.feedbackEnabled), aiChatEnabled: settings?.aiChatEnabled !== false });
   } catch (err) { next(err); }
 });
 app.use("/api/papers", maintenanceGuard, papersRouter);
@@ -35,7 +35,8 @@ app.use((err, _req, res, _next) => {
   console.error(err);
   if (err.name === "MulterError") return res.status(400).json({ message: err.code === "LIMIT_FILE_SIZE" ? `File is too large. Maximum size is ${process.env.MAX_FILE_SIZE_MB || 20} MB.` : err.message });
   if (err.message?.includes("Only PDF and image")) return res.status(400).json({ message: err.message });
-  if (err.message?.includes("GEMINI_API_KEY") || err.message?.includes("Gemini")) return res.status(502).json({ message: err.message });
+  if (err.statusCode) return res.status(err.statusCode).json({ message: err.message });
+  if (err.message?.includes("GEMINI_API_KEY") || err.message?.includes("Gemini") || err.message?.includes("GROQ_API_KEY") || err.message?.includes("Groq")) return res.status(502).json({ message: err.message });
   if (err.code === 11000 && (err.keyPattern?.duplicateKey || err.keyPattern?.titleKey)) return res.status(409).json({ message: "This paper already exists. Duplicate paper was not saved." });
   res.status(500).json({ message: "Something went wrong. Check server configuration and logs." });
 });

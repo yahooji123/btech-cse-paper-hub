@@ -198,6 +198,27 @@ router.patch("/feedback-settings", requireAdmin, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get("/ai-chat-settings", requireAdmin, async (_req, res, next) => {
+  try {
+    const settings = await SiteSettings.findOne({ key: "site" }).select("aiChatEnabled").lean();
+    res.json({ aiChatEnabled: settings?.aiChatEnabled !== false });
+  } catch (err) { next(err); }
+});
+
+router.patch("/ai-chat-settings", requireAdmin, async (req, res, next) => {
+  try {
+    if (typeof req.body?.aiChatEnabled !== "boolean") {
+      return res.status(400).json({ message: "aiChatEnabled must be a boolean." });
+    }
+    const settings = await SiteSettings.findOneAndUpdate(
+      { key: "site" },
+      { $set: { aiChatEnabled: req.body.aiChatEnabled }, $setOnInsert: { key: "site" } },
+      { new: true, upsert: true, runValidators: true }
+    ).select("aiChatEnabled").lean();
+    res.json({ aiChatEnabled: settings.aiChatEnabled });
+  } catch (err) { next(err); }
+});
+
 router.get("/feedback", requireAdmin, async (_req, res, next) => {
   try {
     const feedback = await Feedback.find().sort({ createdAt: -1 }).limit(200).lean();
