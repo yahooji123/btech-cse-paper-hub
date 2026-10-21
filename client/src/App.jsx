@@ -54,7 +54,7 @@ function MissingRequestModal({ onClose }) {
     </section>
   </div>;
 }
-function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSettingChanged }) {
+function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSettingChanged, onAnnouncementChanged }) {
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
   const [form, setForm] = useState(emptyForm);
@@ -70,6 +70,9 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
   const [requestEnabled, setRequestEnabled] = useState(false);
   const [requestBusy, setRequestBusy] = useState(false);
   const [requests, setRequests] = useState([]);
+  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
+  const [announcementText, setAnnouncementText] = useState("");
+  const [announcementBusy, setAnnouncementBusy] = useState(false);
 
   async function unlock(e) {
     e.preventDefault(); setBusy(true); setError(""); setMessage("");
@@ -90,8 +93,9 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
     if (!token) return;
     Promise.all([
       request("/admin/request-settings", { headers: { Authorization: "Bearer " + token } }),
+      request("/admin/announcement", { headers: { Authorization: "Bearer " + token } }),
       request("/admin/paper-requests", { headers: { Authorization: "Bearer " + token } }),
-    ]).then(([settings, data]) => { setRequestEnabled(settings.missingRequestEnabled); setRequests(data.requests); }).catch(err => setError(err.message));
+    ]).then(([settings, announcement, data]) => { setRequestEnabled(settings.missingRequestEnabled); setAnnouncementEnabled(announcement.announcementEnabled); setAnnouncementText(announcement.announcementText); setRequests(data.requests); }).catch(err => setError(err.message));
   }, [token]);
   async function toggleMaintenance() {
     const nextMode = !maintenanceMode;
@@ -124,6 +128,20 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
       setRequests(current => current.filter(requestItem => requestItem._id !== item._id));
       setMessage("Paper request removed.");
     } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  async function saveAnnouncement() {
+    setAnnouncementBusy(true); setError(""); setMessage("");
+    try {
+      const data = await request("/admin/announcement", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ announcementEnabled, announcementText }),
+      });
+      setAnnouncementEnabled(data.announcementEnabled);
+      setAnnouncementText(data.announcementText);
+      onAnnouncementChanged(data.announcementEnabled, data.announcementText);
+      setMessage(data.announcementEnabled ? "Announcement is live for visitors." : "Announcement is saved and hidden.");
+    } catch (err) { setError(err.message); } finally { setAnnouncementBusy(false); }
   }
   function setField(e) { setForm(f => ({ ...f, [e.target.name]: e.target.value })); }
   async function analyzePaper() {
@@ -190,6 +208,7 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
           <div className="notice"><ShieldCheck size={17} /> Admin session active. Session expires after 4 hours or when this panel is closed.</div>
           <div className={`maintenance-control ${maintenanceMode ? "active" : ""}`}><div><b>{maintenanceMode ? "Maintenance mode is ON" : "Maintenance mode is OFF"}</b><span>{maintenanceMode ? "Visitors see the maintenance screen and public APIs are blocked." : "The website is currently available to visitors."}</span></div><button type="button" className={`button ${maintenanceMode ? "maintenance-off" : "maintenance-on"}`} onClick={toggleMaintenance} disabled={maintenanceBusy}><Power size={15} />{maintenanceBusy ? "Updating…" : maintenanceMode ? "Turn off" : "Turn on"}</button></div>
           <div className={`maintenance-control request-control ${requestEnabled ? "active" : ""}`}><div><b>{requestEnabled ? "Missing paper requests are ON" : "Missing paper requests are OFF"}</b><span>{requestEnabled ? "Students can request unavailable papers from the navbar ticker." : "The request button and ticker are hidden from students."}</span></div><button type="button" className={`button ${requestEnabled ? "maintenance-off" : "maintenance-on"}`} onClick={toggleRequests} disabled={requestBusy}><Megaphone size={15} />{requestBusy ? "Updating…" : requestEnabled ? "Turn off" : "Turn on"}</button></div>
+          <div className={`announcement-editor ${announcementEnabled ? "active" : ""}`}><div className="announcement-editor-head"><div><b>Website announcement</b><span>Paste any notice for students, such as new paper uploads or important updates.</span></div><label className="announcement-switch"><input type="checkbox" checked={announcementEnabled} onChange={e => setAnnouncementEnabled(e.target.checked)} /><span>{announcementEnabled ? "Visible" : "Hidden"}</span></label></div><textarea value={announcementText} onChange={e => setAnnouncementText(e.target.value)} maxLength="500" placeholder="e.g. New Semester 5 DBMS papers have been added. Check them out now!" /><div className="announcement-editor-footer"><small>{announcementText.length}/500 characters</small><button type="button" className="button primary" onClick={saveAnnouncement} disabled={announcementBusy || (announcementEnabled && !announcementText.trim())}><Megaphone size={15} />{announcementBusy ? "Saving…" : "Save announcement"}</button></div></div>
           <div className="admin-requests"><div className="admin-list-head"><h3>Missing paper requests <span className="count">{requests.length}</span></h3><button className="button subtle" onClick={() => request("/admin/paper-requests", { headers: { Authorization: "Bearer " + token } }).then(data => setRequests(data.requests)).catch(err => setError(err.message))}><RefreshCw size={15} /> Refresh</button></div>{requests.length === 0 ? <p className="muted">No student requests yet.</p> : <div className="request-list">{requests.map(item => <div className="request-item" key={item._id}><div><b>{item.subject}</b><span>Semester {item.semester} · {item.examType} · {item.academicYear}</span>{item.note && <small>{item.note}</small>}</div><time>{new Date(item.createdAt).toLocaleDateString()}</time><button className="icon-btn danger-icon" title="Remove request" aria-label={`Remove request for ${item.subject}`} onClick={() => deleteRequest(item)} disabled={busy}><Trash2 size={15} /></button></div>)}</div>}</div>
           <form className="admin-form" onSubmit={savePaper}>
             <div className="form-heading"><div><h3>{editing ? "Edit paper details" : "Upload a paper"}</h3><p className="muted">PDFs and common image formats are supported.</p></div>{editing && <div className="form-heading-actions"><button type="button" className="button smart-button" onClick={analyzeExistingPaper} disabled={busy || analyzing}>{analyzing ? "Analyzing…" : "✨ AI re-analyze"}</button><button type="button" className="button subtle" onClick={() => { setEditing(null); setForm(emptyForm); setFile(null); setMessage(""); }}>Cancel edit</button></div>}</div>
@@ -226,6 +245,8 @@ export default function App() {
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [missingRequestEnabled, setMissingRequestEnabled] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
+  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
+  const [announcementText, setAnnouncementText] = useState("");
 
   async function loadMeta() {
     try { const m = await request("/papers/meta"); setMeta(m); } catch (err) { /* list request below shows API error */ }
@@ -245,14 +266,14 @@ export default function App() {
   }
   useEffect(() => { loadMeta(); }, []);
   useEffect(() => {
-    request("/status").then(data => { setMaintenanceMode(data.maintenanceMode); setMissingRequestEnabled(data.missingRequestEnabled); }).catch(() => {});
+    request("/status").then(data => { setMaintenanceMode(data.maintenanceMode); setMissingRequestEnabled(data.missingRequestEnabled); setAnnouncementEnabled(data.announcementEnabled); setAnnouncementText(data.announcementText); }).catch(() => {});
   }, []);
   useEffect(() => { const id = setTimeout(loadPapers, 250); return () => clearTimeout(id); }, [q, semester, examType, year, fileType]);
   const resetFilters = () => { setQ(""); setSemester(""); setExamType(""); setYear(""); setFileType(""); };
   const groupedCount = useMemo(() => papers.length, [papers]);
   return <div className="app-shell">
     <div className="top-strip"><div className="container top-strip-inner"><span><span className="status-dot"></span> Student access is open — no account required</span><span>Built for B.Tech CSE students</span></div></div>
-    <header className="site-header"><div className="container nav-inner"><a className="brand" href="#"><span className="brand-mark"><GraduationCap size={25} /></span><span><b>Paper<span>Hub</span></b><small>B.TECH CSE LIBRARY</small></span></a><nav><a href="#library">Question papers</a><a href="#how">How it works</a><button className="button admin-button maintenance-admin-trigger" onClick={() => setAdminOpen(true)}><ShieldCheck size={16} /> Admin</button></nav></div>{missingRequestEnabled && <div className="request-ticker"><div className="request-ticker-track"><span><Megaphone size={14} /> Can't find a paper? <button onClick={() => setRequestOpen(true)}>Request it from admin</button></span><span><Megaphone size={14} /> Missing paper request is open <button onClick={() => setRequestOpen(true)}>Send your request</button></span></div></div>}</header>
+    <header className="site-header"><div className="container nav-inner"><a className="brand" href="#"><span className="brand-mark"><GraduationCap size={25} /></span><span><b>Paper<span>Hub</span></b><small>B.TECH CSE LIBRARY</small></span></a><nav><a href="#library">Question papers</a><a href="#how">How it works</a><button className="button admin-button maintenance-admin-trigger" onClick={() => setAdminOpen(true)}><ShieldCheck size={16} /> Admin</button></nav></div>{announcementEnabled && announcementText && <div className="announcement-ticker"><div className="announcement-ticker-track"><span><Megaphone size={14} /> {announcementText}</span><span><Megaphone size={14} /> {announcementText}</span></div></div>}{missingRequestEnabled && <div className="request-ticker"><div className="request-ticker-track"><span><Megaphone size={14} /> Can't find a paper? <button onClick={() => setRequestOpen(true)}>Request it from admin</button></span><span><Megaphone size={14} /> Missing paper request is open <button onClick={() => setRequestOpen(true)}>Send your request</button></span></div></div>}</header>
     <main>
       <section className="hero"><div className="hero-grid"></div><div className="container hero-content"><div className="hero-copy"><div className="eyebrow hero-eyebrow"><span></span> YOUR SEMESTER. YOUR RESOURCES.</div><h1>Past papers.<br /><em>Better preparation.</em></h1><p>Find, preview, and practice with B.Tech CSE MTE and ETE question papers — organized by semester, subject, and academic year.</p><div className="hero-actions"><a className="button white-button" href="#library">Explore papers <span>↓</span></a><span className="hero-note"><ShieldCheck size={16} /> Free access · No login</span></div></div><div className="hero-card"><div className="hero-card-top"><span className="mini-label">PAPER LIBRARY</span><BookOpen size={20} /></div><div className="hero-stat-row"><div className="hero-stat">{meta.total ?? 0}<span> papers available</span></div><div className="download-stat"><Download size={17} /><b>{formatCount(meta.totalDownloads ?? 0)}</b><span>total downloads</span></div></div><div className="semester-mini-grid">{[1, 2, 3, 4, 5, 6, 7, 8].map(n => <div key={n}><span>SEM</span><b>{String(n).padStart(2, "0")}</b></div>)}</div><div className="hero-card-foot"><span className="green-pulse"></span> PDFs &amp; images · In-browser preview</div></div></div><div className="container hero-bottom"><span>01 / BROWSE</span><span>02 / PREVIEW</span><span>03 / PREPARE</span></div></section>
       <section className="container library-section" id="library">
@@ -269,6 +290,6 @@ export default function App() {
     {preview && <PreviewModal paper={preview} onClose={() => setPreview(null)} />}
     {maintenanceMode && <div className="maintenance-overlay" role="alert"><div className="maintenance-message"><Power size={30} /><span className="eyebrow">TEMPORARILY UNAVAILABLE</span><h1>Website under maintenance</h1><p>We are making a few improvements. Please check back shortly.</p><button className="button maintenance-access" onClick={() => setAdminOpen(true)}><ShieldCheck size={15} /> Admin access</button></div></div>}
     {requestOpen && <MissingRequestModal onClose={() => setRequestOpen(false)} />}
-    {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} onChanged={() => { loadMeta(); loadPapers(); }} onMaintenanceChanged={setMaintenanceMode} onRequestSettingChanged={setMissingRequestEnabled} />}
+    {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} onChanged={() => { loadMeta(); loadPapers(); }} onMaintenanceChanged={setMaintenanceMode} onRequestSettingChanged={setMissingRequestEnabled} onAnnouncementChanged={(enabled, text) => { setAnnouncementEnabled(enabled); setAnnouncementText(text); }} />}
   </div>;
 }

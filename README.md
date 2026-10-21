@@ -15,6 +15,7 @@ A full-stack question-paper library built with React + Vite, Node.js + Express, 
 - Admin upload/delete routes are protected by a server-side password.
 - Admin can turn maintenance mode on or off. When enabled, the public website shows a maintenance screen and public paper APIs are blocked; admin access remains available.
 - Admin can turn missing-paper requests on or off. When enabled, students see an animated navbar ticker and can submit requests for papers that are not available.
+- Admin can publish a custom announcement from the admin panel and show or hide it for visitors.
 - Files are uploaded to Cloudinary; metadata is stored in MongoDB.
 
 ## Requirements

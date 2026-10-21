@@ -154,6 +154,28 @@ router.patch("/request-settings", requireAdmin, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get("/announcement", requireAdmin, async (_req, res, next) => {
+  try {
+    const settings = await SiteSettings.findOne({ key: "site" }).select("announcementEnabled announcementText").lean();
+    res.json({ announcementEnabled: Boolean(settings?.announcementEnabled), announcementText: settings?.announcementText || "" });
+  } catch (err) { next(err); }
+});
+
+router.patch("/announcement", requireAdmin, async (req, res, next) => {
+  try {
+    const { announcementEnabled, announcementText } = req.body || {};
+    if (typeof announcementEnabled !== "boolean" || typeof announcementText !== "string" || announcementText.trim().length > 500) {
+      return res.status(400).json({ message: "Provide a valid announcement and visibility setting. Maximum length is 500 characters." });
+    }
+    const settings = await SiteSettings.findOneAndUpdate(
+      { key: "site" },
+      { $set: { announcementEnabled, announcementText: announcementText.trim() }, $setOnInsert: { key: "site" } },
+      { new: true, upsert: true, runValidators: true }
+    ).select("announcementEnabled announcementText").lean();
+    res.json({ announcementEnabled: settings.announcementEnabled, announcementText: settings.announcementText });
+  } catch (err) { next(err); }
+});
+
 router.get("/paper-requests", requireAdmin, async (_req, res, next) => {
   try {
     const requests = await PaperRequest.find().sort({ createdAt: -1 }).limit(200).lean();
