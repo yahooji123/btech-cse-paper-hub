@@ -22,8 +22,8 @@ app.use(express.json({ limit: "1mb" }));
 app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "B.Tech CSE Paper Hub API" }));
 app.get("/api/status", async (_req, res, next) => {
   try {
-    const settings = await SiteSettings.findOne({ key: "site" }).select("maintenanceMode missingRequestEnabled announcementEnabled announcementText feedbackEnabled aiChatEnabled").lean();
-    res.json({ maintenanceMode: Boolean(settings?.maintenanceMode), missingRequestEnabled: Boolean(settings?.missingRequestEnabled), announcementEnabled: Boolean(settings?.announcementEnabled), announcementText: settings?.announcementText || "", feedbackEnabled: Boolean(settings?.feedbackEnabled), aiChatEnabled: settings?.aiChatEnabled !== false });
+    const settings = await SiteSettings.findOne({ key: "site" }).select("maintenanceMode missingRequestEnabled announcementEnabled announcementText feedbackEnabled aiChatEnabled solutionEnabled").lean();
+    res.json({ maintenanceMode: Boolean(settings?.maintenanceMode), missingRequestEnabled: Boolean(settings?.missingRequestEnabled), announcementEnabled: Boolean(settings?.announcementEnabled), announcementText: settings?.announcementText || "", feedbackEnabled: Boolean(settings?.feedbackEnabled), aiChatEnabled: settings?.aiChatEnabled !== false, solutionEnabled: Boolean(settings?.solutionEnabled) });
   } catch (err) { next(err); }
 });
 app.use("/api/papers", maintenanceGuard, papersRouter);

@@ -21,6 +21,7 @@ function normalizePaper(paper) {
 
 router.get("/", async (req, res, next) => {
   try {
+    const settings = await SiteSettings.findOne({ key: "site" }).select("solutionEnabled").lean();
     const { semester, examType, academicYear, fileType, q } = req.query;
     const filter = {};
     if (semester && Number.isInteger(Number(semester)) && Number(semester) >= 1 && Number(semester) <= 8) {
@@ -40,7 +41,19 @@ router.get("/", async (req, res, next) => {
       filter.$and = [...(filter.$and || []), searchFilter];
     }
     const papers = await Paper.find(filter).sort({ semester: 1, academicYear: -1, createdAt: -1 }).limit(300).lean();
-    res.json({ papers: papers.map(normalizePaper) });
+    res.json({ papers: papers.map(paper => {
+      const normalized = normalizePaper(paper);
+      if (settings?.solutionEnabled !== true) {
+        delete normalized.solutionFileType;
+        delete normalized.solutionFileUrl;
+        delete normalized.solutionPublicId;
+        delete normalized.solutionCloudResourceType;
+        delete normalized.solutionOriginalName;
+        delete normalized.solutionMimeType;
+        delete normalized.solutionBytes;
+      }
+      return normalized;
+    }) });
   } catch (err) { next(err); }
 });
 
@@ -131,11 +144,41 @@ router.get("/:id/download", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get("/:id/solution/download", async (req, res, next) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: "Invalid paper ID." });
+    const settings = await SiteSettings.findOne({ key: "site" }).select("solutionEnabled").lean();
+    if (settings?.solutionEnabled !== true) return res.status(404).json({ message: "Paper solutions are currently unavailable." });
+    const paper = await Paper.findById(req.params.id).lean();
+    if (!paper?.solutionFileUrl) return res.status(404).json({ message: "Solution not available for this paper." });
+    const fileResponse = await fetch(paper.solutionFileUrl);
+    if (!fileResponse.ok || !fileResponse.body) return res.status(502).json({ message: "The solution file could not be downloaded from storage." });
+    const fallbackName = `${paper.title}-solution.${paper.solutionFileType === "pdf" ? "pdf" : "jpg"}`;
+    const filename = (paper.solutionOriginalName || fallbackName).replace(/[\r\n"]/g, "_");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Type", fileResponse.headers.get("content-type") || paper.solutionMimeType || "application/octet-stream");
+    if (fileResponse.headers.get("content-length")) res.setHeader("Content-Length", fileResponse.headers.get("content-length"));
+    res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
+    for await (const chunk of fileResponse.body) res.write(chunk);
+    res.end();
+  } catch (err) { next(err); }
+});
+
 router.get("/:id", async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: "Invalid paper ID." });
     const paper = await Paper.findById(req.params.id).lean();
     if (!paper) return res.status(404).json({ message: "Paper not found." });
+    const settings = await SiteSettings.findOne({ key: "site" }).select("solutionEnabled").lean();
+    if (settings?.solutionEnabled !== true) {
+      delete paper.solutionFileType;
+      delete paper.solutionFileUrl;
+      delete paper.solutionPublicId;
+      delete paper.solutionCloudResourceType;
+      delete paper.solutionOriginalName;
+      delete paper.solutionMimeType;
+      delete paper.solutionBytes;
+    }
     res.json({ paper });
   } catch (err) { next(err); }
 });

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import mermaid from "mermaid";
-import { BookOpen, Search, Download, Eye, ShieldCheck, UploadCloud, X, FileText, Image as ImageIcon, Trash2, Pencil, GraduationCap, Filter, LockKeyhole, RefreshCw, ExternalLink, Power, Megaphone, Send, Star, Bot, ArrowUp, Moon, Sun, Maximize2, Minimize2 } from "lucide-react";
+import { BookOpen, Search, Download, Eye, ShieldCheck, UploadCloud, X, FileText, Image as ImageIcon, Trash2, Pencil, GraduationCap, Filter, LockKeyhole, RefreshCw, ExternalLink, Power, Megaphone, Send, Star, Bot, ArrowUp, Moon, Sun, Maximize2, Minimize2, LayoutPanelTop } from "lucide-react";
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/$/, "");
 const emptyForm = { title: "", semesters: ["1"], subject: "", subjectCode: "", examType: "MTE", academicYear: "2025" };
@@ -101,7 +101,12 @@ function EducationalImageGallery({ images = [], query = "" }) {
     <small>Images from Wikimedia Commons · Open an image to view its source.</small>
   </div>;
 }
-function PreviewModal({ paper, onClose, onDownloaded }) {
+function PreviewModal({ paper, onClose, onDownloaded, solutionEnabled, initialView = "paper" }) {
+  const [view, setView] = useState(initialView);
+  const showingSolution = solutionEnabled && view === "solution" && paper.solutionFileUrl;
+  const fileUrl = showingSolution ? paper.solutionFileUrl : paper.fileUrl;
+  const fileType = showingSolution ? paper.solutionFileType : paper.fileType;
+  const downloadUrl = showingSolution ? `${API}/papers/${paper._id}/solution/download` : `${API}/papers/${paper._id}/download`;
   useEffect(() => {
     const key = e => e.key === "Escape" && onClose();
     window.addEventListener("keydown", key);
@@ -111,11 +116,12 @@ function PreviewModal({ paper, onClose, onDownloaded }) {
   return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}>
     <section className="preview-modal" role="dialog" aria-modal="true" aria-label={`Preview ${paper.title}`}>
       <header className="modal-head"><div><span className="eyebrow">PAPER PREVIEW</span><h2>{paper.title}</h2>      <p>{paper.subject} · Semester {paper.semesters?.join(", ") || paper.semester} · {paper.examType} · {paper.academicYear}</p></div><button className="icon-btn" onClick={onClose} aria-label="Close preview"><X /></button></header>
+      {solutionEnabled && paper.solutionFileUrl && <div className="preview-tabs"><button className={view === "paper" ? "active" : ""} onClick={() => setView("paper")}>Question paper</button><button className={view === "solution" ? "active" : ""} onClick={() => setView("solution")}>Solution</button></div>}
       <div className="preview-body">
-        {paper.fileType === "image" ? <img className="preview-image" src={paper.fileUrl} alt={paper.title} /> :
-          <iframe className="pdf-frame" title={paper.title} src={paper.fileUrl} />}
+        {fileType === "image" ? <img className="preview-image" src={fileUrl} alt={`${paper.title} ${showingSolution ? "solution" : "question paper"}`} /> :
+          <iframe className="pdf-frame" title={`${paper.title} ${showingSolution ? "solution" : "question paper"}`} src={fileUrl} />}
       </div>
-      <footer className="modal-footer"><span className="muted">Preview opens here; downloading is optional.</span><a className="button primary" href={paper.fileUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Open in new tab</a><a className="button outline" href={`${API}/papers/${paper._id}/download`} onClick={() => onDownloaded(paper)}><Download size={16} /> Download</a></footer>
+      <footer className="modal-footer"><span className="muted">{showingSolution ? "Solution preview · downloading is optional." : "Preview opens here; downloading is optional."}</span><a className="button primary" href={fileUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Open in new tab</a><a className="button outline" href={downloadUrl} onClick={() => !showingSolution && onDownloaded(paper)}><Download size={16} /> Download</a></footer>
     </section>
   </div>;
 }
@@ -189,11 +195,13 @@ function MissingRequestModal({ onClose }) {
     </section>
   </div>;
 }
-function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSettingChanged, onAnnouncementChanged, onFeedbackSettingChanged, onAiChatSettingChanged }) {
+function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSettingChanged, onAnnouncementChanged, onFeedbackSettingChanged, onAiChatSettingChanged, onSolutionSettingChanged }) {
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
   const [form, setForm] = useState(emptyForm);
   const [file, setFile] = useState(null);
+  const [solutionFile, setSolutionFile] = useState(null);
+  const [removeSolution, setRemoveSolution] = useState(false);
   const [busy, setBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [message, setMessage] = useState("");
@@ -213,6 +221,13 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
   const [feedback, setFeedback] = useState([]);
   const [aiChatEnabled, setAiChatEnabled] = useState(false);
   const [aiChatBusy, setAiChatBusy] = useState(false);
+  const [solutionEnabled, setSolutionEnabled] = useState(false);
+  const [solutionBusy, setSolutionBusy] = useState(false);
+  const [studentToolsOpen, setStudentToolsOpen] = useState(false);
+  const [adminSemesterFilter, setAdminSemesterFilter] = useState("");
+  const [solutionPaperId, setSolutionPaperId] = useState("");
+  const [solutionManagerFile, setSolutionManagerFile] = useState(null);
+  const [solutionManagerBusy, setSolutionManagerBusy] = useState(false);
 
   async function unlock(e) {
     e.preventDefault(); setBusy(true); setError(""); setMessage("");
@@ -220,7 +235,7 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
     catch (err) { setError(err.message); } finally { setBusy(false); }
   }
   async function loadAdminPapers() {
-    try { const d = await request("/papers", { headers: { Authorization: "Bearer " + token } }); setPapers(d.papers); } catch (err) { setError(err.message); }
+    try { const d = await request("/admin/papers", { headers: { Authorization: "Bearer " + token } }); setPapers(d.papers); } catch (err) { setError(err.message); }
   }
   useEffect(() => { if (token) loadAdminPapers(); }, [token]);
   useEffect(() => {
@@ -236,9 +251,10 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
       request("/admin/announcement", { headers: { Authorization: "Bearer " + token } }),
       request("/admin/feedback-settings", { headers: { Authorization: "Bearer " + token } }),
       request("/admin/ai-chat-settings", { headers: { Authorization: "Bearer " + token } }),
+      request("/admin/solution-settings", { headers: { Authorization: "Bearer " + token } }),
       request("/admin/feedback", { headers: { Authorization: "Bearer " + token } }),
       request("/admin/paper-requests", { headers: { Authorization: "Bearer " + token } }),
-    ]).then(([settings, announcement, feedbackSettings, aiChatSettings, feedbackData, data]) => { setRequestEnabled(settings.missingRequestEnabled); setAnnouncementEnabled(announcement.announcementEnabled); setAnnouncementText(announcement.announcementText); setFeedbackEnabled(feedbackSettings.feedbackEnabled); setAiChatEnabled(aiChatSettings.aiChatEnabled); setFeedback(feedbackData.feedback); setRequests(data.requests); }).catch(err => setError(err.message));
+    ]).then(([settings, announcement, feedbackSettings, aiChatSettings, solutionSettings, feedbackData, data]) => { setRequestEnabled(settings.missingRequestEnabled); setAnnouncementEnabled(announcement.announcementEnabled); setAnnouncementText(announcement.announcementText); setFeedbackEnabled(feedbackSettings.feedbackEnabled); setAiChatEnabled(aiChatSettings.aiChatEnabled); setSolutionEnabled(solutionSettings.solutionEnabled); setFeedback(feedbackData.feedback); setRequests(data.requests); }).catch(err => setError(err.message));
   }, [token]);
   async function toggleMaintenance() {
     const nextMode = !maintenanceMode;
@@ -304,6 +320,45 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
       setMessage(data.aiChatEnabled ? "Paper AI chat is now visible to students." : "Paper AI chat is hidden from students.");
     } catch (err) { setError(err.message); } finally { setAiChatBusy(false); }
   }
+  async function toggleSolutions() {
+    const nextEnabled = !solutionEnabled;
+    setSolutionBusy(true); setError(""); setMessage("");
+    try {
+      const data = await request("/admin/solution-settings", { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify({ solutionEnabled: nextEnabled }) });
+      setSolutionEnabled(data.solutionEnabled); onSolutionSettingChanged(data.solutionEnabled);
+      setMessage(data.solutionEnabled ? "Paper solutions are now visible to students." : "Paper solutions are hidden from students.");
+    } catch (err) { setError(err.message); } finally { setSolutionBusy(false); }
+  }
+  async function saveManagedSolution(e) {
+    e.preventDefault();
+    if (!solutionPaperId || !solutionManagerFile) {
+      setError("Select a question paper and choose a solution PDF or image.");
+      return;
+    }
+    setSolutionManagerBusy(true); setError(""); setMessage("");
+    try {
+      const data = new FormData();
+      data.append("solutionFile", solutionManagerFile);
+      await request(`/admin/papers/${solutionPaperId}`, { method: "PATCH", headers: { Authorization: "Bearer " + token }, body: data });
+      setSolutionManagerFile(null);
+      setSolutionPaperId("");
+      setMessage("Solution uploaded and linked to the selected question paper.");
+      await loadAdminPapers();
+      onChanged();
+    } catch (err) { setError(err.message); } finally { setSolutionManagerBusy(false); }
+  }
+  async function removeManagedSolution(paper) {
+    if (!confirm(`Remove the solution for "${paper.title}"?`)) return;
+    setSolutionManagerBusy(true); setError(""); setMessage("");
+    try {
+      const data = new FormData();
+      data.append("removeSolution", "true");
+      await request(`/admin/papers/${paper._id}`, { method: "PATCH", headers: { Authorization: "Bearer " + token }, body: data });
+      setMessage("Solution removed from the selected question paper.");
+      await loadAdminPapers();
+      onChanged();
+    } catch (err) { setError(err.message); } finally { setSolutionManagerBusy(false); }
+  }
   async function deleteFeedback(item) {
     if (!confirm("Delete this feedback?")) return;
     setBusy(true); setError("");
@@ -347,15 +402,16 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
     e.preventDefault(); setBusy(true); setError(""); setMessage("");
     try {
       if (editing) {
-        await request(`/admin/papers/${editing}`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify(form) });
+        const data = new FormData(); Object.entries(form).forEach(([k, v]) => data.append(k, Array.isArray(v) ? JSON.stringify(v) : v)); if (solutionFile) data.append("solutionFile", solutionFile); if (removeSolution) data.append("removeSolution", "true");
+        await request(`/admin/papers/${editing}`, { method: "PATCH", headers: { Authorization: "Bearer " + token }, body: data });
         setMessage("Paper details updated."); setEditing(null);
       } else {
         if (!file) throw new Error("Please choose a PDF or image file.");
-        const data = new FormData(); Object.entries(form).forEach(([k, v]) => data.append(k, v)); data.append("file", file);
+        const data = new FormData(); Object.entries(form).forEach(([k, v]) => data.append(k, Array.isArray(v) ? JSON.stringify(v) : v)); data.append("file", file); if (solutionFile) data.append("solutionFile", solutionFile);
         await request("/admin/papers", { method: "POST", headers: { Authorization: "Bearer " + token }, body: data });
         setMessage("Paper uploaded successfully to Cloudinary.");
       }
-      setForm(emptyForm); setFile(null); await loadAdminPapers(); onChanged();
+      setForm(emptyForm); setFile(null); setSolutionFile(null); setRemoveSolution(false); await loadAdminPapers(); onChanged();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
   async function deletePaper(paper) {
@@ -367,22 +423,37 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
   function editPaper(p) {
     setEditing(p._id);
     setForm({ title: p.title, semesters: (p.semesters || [p.semester]).map(String), subject: p.subject, subjectCode: p.subjectCode || "", examType: p.examType, academicYear: p.academicYear });
-    setFile(null); setMessage("Editing metadata. The existing file will remain unchanged.");
+    setFile(null); setSolutionFile(null); setRemoveSolution(false); setMessage("Editing metadata. The existing files will remain unchanged unless you choose a new solution.");
     document.querySelector(".admin-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+  const papersBySemester = useMemo(() => {
+    const groups = new Map();
+    papers.forEach(paper => {
+      const semesters = paper.semesters?.length ? paper.semesters : [paper.semester];
+      semesters.filter(Number.isInteger).forEach(semester => {
+        if (!groups.has(semester)) groups.set(semester, []);
+        groups.get(semester).push(paper);
+      });
+    });
+    return [...groups.entries()].sort(([a], [b]) => a - b);
+  }, [papers]);
   return <div className="modal-backdrop admin-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}>
     <section className="admin-modal" role="dialog" aria-modal="true" aria-label="Admin panel">
       <header className="modal-head"><div className="admin-title"><span className="admin-icon"><ShieldCheck /></span><div><span className="eyebrow">RESTRICTED ACCESS</span><h2>Admin dashboard</h2><p>Upload and manage question papers</p></div></div><button className="icon-btn" onClick={onClose} aria-label="Close admin"><X /></button></header>
       {!token ? <form className="unlock-form" onSubmit={unlock}><div className="lock-art"><LockKeyhole size={27} /></div><h3>Admin unlock</h3><p className="muted">Students can browse papers without signing in. Only the admin password is required here.</p><label>Admin password<input autoFocus type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter admin password" required /></label><button className="button primary full" disabled={busy}>{busy ? "Checking…" : "Unlock admin panel"}</button></form> :
         <div className="admin-content">
-          <div className="notice"><ShieldCheck size={17} /> Admin session active. Session expires after 4 hours or when this panel is closed.</div>
+          <div className="admin-content-topbar"><div className="notice"><ShieldCheck size={17} /> Admin session active. Session expires after 4 hours or when this panel is closed.</div><button type="button" className="button student-tools-button" onClick={() => setStudentToolsOpen(true)}><LayoutPanelTop size={15} /> Student tools</button></div>
+          {studentToolsOpen && <section className="student-tools-panel">
+            <div className="student-tools-header"><div><span className="eyebrow">STUDENT TOOLS</span><h3>Student-facing controls</h3><p>Manage visibility settings, feedback, announcements, AI chat, solutions, and student requests.</p></div><button type="button" className="icon-btn" onClick={() => setStudentToolsOpen(false)} aria-label="Close student tools"><X /></button></div>
           <div className={`maintenance-control ${maintenanceMode ? "active" : ""}`}><div><b>{maintenanceMode ? "Maintenance mode is ON" : "Maintenance mode is OFF"}</b><span>{maintenanceMode ? "Visitors see the maintenance screen and public APIs are blocked." : "The website is currently available to visitors."}</span></div><button type="button" className={`button ${maintenanceMode ? "maintenance-off" : "maintenance-on"}`} onClick={toggleMaintenance} disabled={maintenanceBusy}><Power size={15} />{maintenanceBusy ? "Updating…" : maintenanceMode ? "Turn off" : "Turn on"}</button></div>
           <div className={`maintenance-control request-control ${requestEnabled ? "active" : ""}`}><div><b>{requestEnabled ? "Missing paper requests are ON" : "Missing paper requests are OFF"}</b><span>{requestEnabled ? "Students can request unavailable papers from the navbar ticker." : "The request button and ticker are hidden from students."}</span></div><button type="button" className={`button ${requestEnabled ? "maintenance-off" : "maintenance-on"}`} onClick={toggleRequests} disabled={requestBusy}><Megaphone size={15} />{requestBusy ? "Updating…" : requestEnabled ? "Turn off" : "Turn on"}</button></div>
           <div className={`announcement-editor ${announcementEnabled ? "active" : ""}`}><div className="announcement-editor-head"><div><b>Website announcement</b><span>Paste any notice for students, such as new paper uploads or important updates.</span></div><label className="announcement-switch"><input type="checkbox" checked={announcementEnabled} onChange={e => setAnnouncementEnabled(e.target.checked)} /><span>{announcementEnabled ? "Visible" : "Hidden"}</span></label></div><textarea value={announcementText} onChange={e => setAnnouncementText(e.target.value)} maxLength="500" placeholder="e.g. New Semester 5 DBMS papers have been added. Check them out now!" /><div className="announcement-editor-footer"><small>{announcementText.length}/500 characters</small><button type="button" className="button primary" onClick={saveAnnouncement} disabled={announcementBusy || (announcementEnabled && !announcementText.trim())}><Megaphone size={15} />{announcementBusy ? "Saving…" : "Save announcement"}</button></div></div>
           <div className={`maintenance-control feedback-control ${feedbackEnabled ? "active" : ""}`}><div><b>{feedbackEnabled ? "Download feedback is ON" : "Download feedback is OFF"}</b><span>{feedbackEnabled ? "Students see a rating card after downloading a paper." : "The feedback card is hidden from students."}</span></div><button type="button" className={`button ${feedbackEnabled ? "maintenance-off" : "maintenance-on"}`} onClick={toggleFeedback} disabled={feedbackBusy}><Star size={15} />{feedbackBusy ? "Updating…" : feedbackEnabled ? "Turn off" : "Turn on"}</button></div>
           <div className={`maintenance-control feedback-control ${aiChatEnabled ? "active" : ""}`}><div><b>{aiChatEnabled ? "Paper AI chat is ON" : "Paper AI chat is OFF"}</b><span>{aiChatEnabled ? "Students can see Ask AI on paper cards." : "Ask AI is hidden from students."}</span></div><button type="button" className={`button ${aiChatEnabled ? "maintenance-off" : "maintenance-on"}`} onClick={toggleAiChat} disabled={aiChatBusy}><Bot size={15} />{aiChatBusy ? "Updating…" : aiChatEnabled ? "Hide chat" : "Show chat"}</button></div>
+          <div className={`maintenance-control feedback-control ${solutionEnabled ? "active" : ""}`}><div><b>{solutionEnabled ? "Paper solutions are ON" : "Paper solutions are OFF"}</b><span>{solutionEnabled ? "Students can view and download uploaded solutions." : "Solution buttons are hidden from students."}</span></div><button type="button" className={`button ${solutionEnabled ? "maintenance-off" : "maintenance-on"}`} onClick={toggleSolutions} disabled={solutionBusy}><FileText size={15} />{solutionBusy ? "Updating…" : solutionEnabled ? "Hide solutions" : "Show solutions"}</button></div>
           <div className="admin-feedback"><div className="admin-list-head"><h3>Student feedback <span className="count">{feedback.length}</span></h3><button className="button subtle" onClick={() => request("/admin/feedback", { headers: { Authorization: "Bearer " + token } }).then(data => setFeedback(data.feedback)).catch(err => setError(err.message))}><RefreshCw size={15} /> Refresh</button></div>{feedback.length === 0 ? <p className="muted">No feedback received yet.</p> : <div className="feedback-list">{feedback.map(item => <div className="feedback-item" key={item._id}><div><b>{item.paperTitle || "Paper feedback"} · {"★".repeat(item.rating)}{"☆".repeat(5 - item.rating)}</b>{item.message && <span>{item.message}</span>}<small>{new Date(item.createdAt).toLocaleDateString()}</small></div><button className="icon-btn danger-icon" title="Delete feedback" onClick={() => deleteFeedback(item)} disabled={busy}><Trash2 size={15} /></button></div>)}</div>}</div>
           <div className="admin-requests"><div className="admin-list-head"><h3>Missing paper requests <span className="count">{requests.length}</span></h3><button className="button subtle" onClick={() => request("/admin/paper-requests", { headers: { Authorization: "Bearer " + token } }).then(data => setRequests(data.requests)).catch(err => setError(err.message))}><RefreshCw size={15} /> Refresh</button></div>{requests.length === 0 ? <p className="muted">No student requests yet.</p> : <div className="request-list">{requests.map(item => <div className="request-item" key={item._id}><div><b>{item.subject}</b><span>Semester {item.semester} · {item.examType} · {item.academicYear}</span>{item.note && <small>{item.note}</small>}</div><time>{new Date(item.createdAt).toLocaleDateString()}</time><button className="icon-btn danger-icon" title="Remove request" aria-label={`Remove request for ${item.subject}`} onClick={() => deleteRequest(item)} disabled={busy}><Trash2 size={15} /></button></div>)}</div>}</div>
+          </section>}
           <form className="admin-form" onSubmit={savePaper}>
             <div className="form-heading"><div><h3>{editing ? "Edit paper details" : "Upload a paper"}</h3><p className="muted">PDFs and common image formats are supported.</p></div>{editing && <div className="form-heading-actions"><button type="button" className="button smart-button" onClick={analyzeExistingPaper} disabled={busy || analyzing}>{analyzing ? "Analyzing…" : "✨ AI re-analyze"}</button><button type="button" className="button subtle" onClick={() => { setEditing(null); setForm(emptyForm); setFile(null); setMessage(""); }}>Cancel edit</button></div>}</div>
             <div className="form-grid">
@@ -393,11 +464,23 @@ function AdminPanel({ onClose, onChanged, onMaintenanceChanged, onRequestSetting
               <label>Subject code <span className="muted">(optional)</span><input name="subjectCode" value={form.subjectCode} onChange={setField} placeholder="e.g. KCS-501" /></label>
               <label>Academic year<input name="academicYear" value={form.academicYear} onChange={setField} required pattern="\d{4}" maxLength="4" placeholder="2025" /></label>
               {!editing && <><label className="file-drop span-2"><UploadCloud size={24} /><b>{file ? file.name : "Choose a PDF or image"}</b><span className="muted">{file ? formatBytes(file.size) : "Maximum size set by server (default 20 MB)"}</span><input type="file" accept="application/pdf,image/*" onChange={e => { setFile(e.target.files?.[0] || null); setMessage(""); setError(""); }} required /></label><button type="button" className="button smart-button span-2" onClick={analyzePaper} disabled={busy || analyzing || !file}>{analyzing ? "Reading paper with Gemini…" : "✨ Auto-fill details with Gemini"}</button></>}
+              <label className="file-drop span-2"><UploadCloud size={24} /><b>{solutionFile ? solutionFile.name : "Add solution (optional)"}</b><span className="muted">{solutionFile ? formatBytes(solutionFile.size) : editing ? "Choose a new solution to replace the current one." : "Students can view this when solutions are enabled."}</span><input type="file" accept="application/pdf,image/*" onChange={e => { setSolutionFile(e.target.files?.[0] || null); setRemoveSolution(false); setError(""); }} /></label>
+              {editing && <label className="solution-remove span-2"><input type="checkbox" checked={removeSolution} onChange={e => setRemoveSolution(e.target.checked)} /> Remove the current solution</label>}
             </div>
             <button className="button primary full" disabled={busy}>{busy ? "Saving…" : editing ? "Save paper details" : "Upload paper"}</button>
           </form>
-          <div className="admin-list-head"><h3>Uploaded papers <span className="count">{papers.length}</span></h3><button className="button subtle" onClick={loadAdminPapers}><RefreshCw size={15} /> Refresh</button></div>
-          <div className="admin-paper-list">{papers.map(p => <div className="admin-paper" key={p._id}><span className="file-type">{p.fileType === "pdf" ? <FileText /> : <ImageIcon />}</span><div className="admin-paper-text"><b>{p.title}</b><span>{p.subject} · Sem {(p.semesters || [p.semester]).join(", ")} · {p.examType} · {p.academicYear}</span></div><button className="icon-btn" title="Edit details" onClick={() => editPaper(p)}><Pencil size={16} /></button><button className="icon-btn danger-icon" title="Delete paper" onClick={() => deletePaper(p)} disabled={busy}><Trash2 size={16} /></button></div>)}</div>
+          <div className="admin-list-head uploaded-papers-head"><div><h3>Uploaded papers <span className="count">{papers.length}</span></h3><label className="admin-semester-filter">Semester<select value={adminSemesterFilter} onChange={e => setAdminSemesterFilter(e.target.value)}><option value="">All semesters</option>{[1, 2, 3, 4, 5, 6, 7, 8].map(semester => <option key={semester} value={semester}>Semester {semester}</option>)}</select></label></div><button className="button subtle" onClick={loadAdminPapers}><RefreshCw size={15} /> Refresh</button></div>
+          <div className="admin-paper-list-scroll" aria-label="Uploaded papers grouped by semester">{papersBySemester.filter(([semester]) => !adminSemesterFilter || String(semester) === adminSemesterFilter).length === 0 ? <p className="muted">No uploaded papers for this semester.</p> : papersBySemester.filter(([semester]) => !adminSemesterFilter || String(semester) === adminSemesterFilter).map(([semester, semesterPapers]) => <section className="admin-semester-group" key={semester}><div className="admin-semester-heading"><span>SEMESTER {semester}</span><b>{semesterPapers.length} {semesterPapers.length === 1 ? "paper" : "papers"}</b></div><div className="admin-paper-list">{semesterPapers.map(p => <div className="admin-paper" key={`${semester}-${p._id}`}><span className="file-type">{p.fileType === "pdf" ? <FileText /> : <ImageIcon />}</span><div className="admin-paper-text"><b>{p.title}</b><span>{p.subject} · {p.examType} · {p.academicYear}{p.solutionFileUrl ? " · Solution attached" : ""}</span></div><button className="icon-btn" title="Edit details" onClick={() => editPaper(p)}><Pencil size={16} /></button><button className="icon-btn danger-icon" title="Delete paper" onClick={() => deletePaper(p)} disabled={busy}><Trash2 size={16} /></button></div>)}</div></section>)}</div>
+          <section className="solution-manager">
+            <div className="solution-manager-head"><div><span className="eyebrow">SOLUTION LIBRARY</span><h3>Add solutions to uploaded papers</h3><p>Choose any current question paper or an older upload, then attach or replace its solution PDF/image.</p></div><div className={`solution-status ${solutionEnabled ? "visible" : "hidden"}`}>{solutionEnabled ? "Visible to students" : "Hidden from students"}</div></div>
+            <form className="solution-manager-form" onSubmit={saveManagedSolution}>
+              <label>Question paper<select value={solutionPaperId} onChange={e => setSolutionPaperId(e.target.value)} required><option value="">Select an uploaded question paper</option>{papers.map(p => <option key={p._id} value={p._id}>{p.title} · {p.subject} · {p.academicYear}{p.solutionFileUrl ? " · solution attached" : ""}</option>)}</select></label>
+              <label className="file-drop"><UploadCloud size={22} /><b>{solutionManagerFile ? solutionManagerFile.name : "Choose solution PDF or image"}</b><span className="muted">{solutionManagerFile ? formatBytes(solutionManagerFile.size) : "Maximum size set by server (default 20 MB)"}</span><input type="file" accept="application/pdf,image/*" onChange={e => setSolutionManagerFile(e.target.files?.[0] || null)} required /></label>
+              <button className="button primary" disabled={solutionManagerBusy || !solutionPaperId || !solutionManagerFile}><UploadCloud size={15} />{solutionManagerBusy ? "Saving…" : "Attach solution"}</button>
+            </form>
+            <div className="solution-manager-list">{papers.filter(p => p.solutionFileUrl).map(p => <div className="solution-manager-item" key={p._id}><div><b>{p.title}</b><span>{p.subject} · {p.solutionFileType?.toUpperCase()} · {formatBytes(p.solutionBytes)}</span></div><button type="button" className="button outline" onClick={() => removeManagedSolution(p)} disabled={solutionManagerBusy}><Trash2 size={14} /> Remove solution</button></div>)}</div>
+            {papers.every(p => !p.solutionFileUrl) && <p className="muted solution-empty">No solutions attached yet. Select a paper above to add the first one.</p>}
+          </section>
         </div>}
       {(message || error) && <div className={error ? "alert error" : "alert success"}>{error || message}</div>}
     </section>
@@ -421,6 +504,7 @@ export default function App() {
   const [requestOpen, setRequestOpen] = useState(false);
   const [feedbackEnabled, setFeedbackEnabled] = useState(false);
   const [aiChatEnabled, setAiChatEnabled] = useState(false);
+  const [solutionEnabled, setSolutionEnabled] = useState(false);
   const [feedbackPaper, setFeedbackPaper] = useState(null);
   const [aiPaper, setAiPaper] = useState(null);
   const [announcementEnabled, setAnnouncementEnabled] = useState(false);
@@ -444,7 +528,7 @@ export default function App() {
   }
   useEffect(() => { loadMeta(); }, []);
   useEffect(() => {
-    request("/status").then(data => { setMaintenanceMode(data.maintenanceMode); setMissingRequestEnabled(data.missingRequestEnabled); setAnnouncementEnabled(data.announcementEnabled); setAnnouncementText(data.announcementText); setFeedbackEnabled(data.feedbackEnabled); setAiChatEnabled(data.aiChatEnabled); }).catch(() => {});
+    request("/status").then(data => { setMaintenanceMode(data.maintenanceMode); setMissingRequestEnabled(data.missingRequestEnabled); setAnnouncementEnabled(data.announcementEnabled); setAnnouncementText(data.announcementText); setFeedbackEnabled(data.feedbackEnabled); setAiChatEnabled(data.aiChatEnabled); setSolutionEnabled(data.solutionEnabled); }).catch(() => {});
   }, []);
   useEffect(() => { const id = setTimeout(loadPapers, 250); return () => clearTimeout(id); }, [q, semester, examType, year, fileType]);
   useEffect(() => {
@@ -463,16 +547,16 @@ export default function App() {
         {error && <div className="error-banner"><b>Could not load papers.</b><span>{error}</span><button className="button outline" onClick={() => { loadMeta(); loadPapers(); }}>Try again</button></div>}
         {loading ? <div className="empty-state"><div className="spinner"></div><h3>Loading paper library…</h3><p>Connecting to the paper collection.</p></div> :
           papers.length === 0 ? <div className="empty-state"><div className="empty-icon"><BookOpen size={28} /></div><h3>No papers found yet</h3><p>{error ? "Fix the API configuration and retry." : "Try changing your filters, or check back after the admin uploads papers."}</p>{!error && <button className="button outline" onClick={resetFilters}>Clear filters</button>}</div> :
-            <div className="paper-grid">{papers.map(p => <article className="paper-card" key={p._id}><div className="paper-card-art">{isRecentlyAdded(p.createdAt) && <span className="new-paper-badge">NEW</span>}<div className={`file-illustration ${p.fileType}`}><span className="file-corner"></span>{p.fileType === "pdf" ? <FileText size={35} /> : <ImageIcon size={35} />}<b>{p.fileType === "pdf" ? "PDF" : "IMAGE"}</b></div><div className="art-meta"><span className={`exam-tag ${p.examType.toLowerCase()}`}>{p.examType}</span><span>SEM {(p.semesters || [p.semester]).join(", ")}</span></div></div><div className="paper-card-body"><div className="year-row"><span>{p.academicYear}</span><span>{formatBytes(p.bytes)}</span></div><h3>{p.title}</h3><p className="subject-line">{p.subject}{p.subjectCode ? ` · ${p.subjectCode}` : ""}</p><div className="paper-card-actions"><button className="button primary" onClick={() => setPreview(p)}><Eye size={16} /> Preview</button>{aiChatEnabled && <button className="button ai-button" onClick={() => setAiPaper(p)}><Bot size={16} /> Ask AI</button>}<a className="button outline" href={`${API}/papers/${p._id}/download`} onClick={() => feedbackEnabled && setFeedbackPaper(p)}><Download size={16} /> Download</a></div><span className="download-count"><Download size={12} /> {p.downloadCount ?? 0} downloads</span></div></article>)}</div>}
+            <div className="paper-grid">{papers.map(p => <article className="paper-card" key={p._id}><div className="paper-card-art">{isRecentlyAdded(p.createdAt) && <span className="new-paper-badge">NEW</span>}<div className={`file-illustration ${p.fileType}`}><span className="file-corner"></span>{p.fileType === "pdf" ? <FileText size={35} /> : <ImageIcon size={35} />}<b>{p.fileType === "pdf" ? "PDF" : "IMAGE"}</b></div><div className="art-meta"><span className={`exam-tag ${p.examType.toLowerCase()}`}>{p.examType}</span><span>SEM {(p.semesters || [p.semester]).join(", ")}</span></div></div><div className="paper-card-body"><div className="year-row"><span>{p.academicYear}</span><span>{formatBytes(p.bytes)}</span></div><h3>{p.title}</h3><p className="subject-line">{p.subject}{p.subjectCode ? ` · ${p.subjectCode}` : ""}</p><div className="paper-card-actions"><button className="button primary" onClick={() => setPreview(p)}><Eye size={16} /> Preview</button>{solutionEnabled && p.solutionFileUrl && <button className="button solution-button" onClick={() => setPreview({ ...p, previewSolution: true })}><FileText size={16} /> Solution</button>}{aiChatEnabled && <button className="button ai-button" onClick={() => setAiPaper(p)}><Bot size={16} /> Ask AI</button>}<a className="button outline" href={`${API}/papers/${p._id}/download`} onClick={() => feedbackEnabled && setFeedbackPaper(p)}><Download size={16} /> Download</a></div><span className="download-count"><Download size={12} /> {p.downloadCount ?? 0} downloads</span></div></article>)}</div>}
       </section>
       <section className="how-section" id="how"><div className="container"><div className="eyebrow dark-eyebrow">SIMPLE BY DESIGN</div><h2>From search to <em>study mode.</em></h2><div className="steps"><div className="step"><span>01</span><Search /><h3>Find a paper</h3><p>Filter by semester, subject, MTE/ETE, and year to narrow your search.</p></div><div className="step"><span>02</span><Eye /><h3>Preview instantly</h3><p>Read PDFs and images in the website without downloading first.</p></div><div className="step"><span>03</span><Download /><h3>Practice your way</h3><p>Open or download a paper when you want an offline copy.</p></div></div></div></section>
     </main>
     <footer className="site-footer"><div className="container footer-inner"><a className="brand footer-brand" href="#"><span className="brand-mark"><GraduationCap size={22} /></span><span><b>Paper<span>Hub</span></b><small>B.TECH CSE LIBRARY</small></span></a><p>Built for students. Focused on preparation.</p><span>© {new Date().getFullYear()} PaperHub</span></div></footer>
-    {preview && <PreviewModal paper={preview} onClose={() => setPreview(null)} onDownloaded={paper => feedbackEnabled && setFeedbackPaper(paper)} />}
+    {preview && <PreviewModal paper={preview} initialView={preview.previewSolution ? "solution" : "paper"} solutionEnabled={solutionEnabled} onClose={() => setPreview(null)} onDownloaded={paper => feedbackEnabled && setFeedbackPaper(paper)} />}
     {feedbackPaper && <FeedbackModal paper={feedbackPaper} onClose={() => setFeedbackPaper(null)} />}
     {aiPaper && <PaperAiModal paper={aiPaper} onClose={() => setAiPaper(null)} />}
     {maintenanceMode && <div className="maintenance-overlay" role="alert"><div className="maintenance-message"><Power size={30} /><span className="eyebrow">TEMPORARILY UNAVAILABLE</span><h1>Website under maintenance</h1><p>We are making a few improvements. Please check back shortly.</p><button className="button maintenance-access" onClick={() => setAdminOpen(true)}><ShieldCheck size={15} /> Admin access</button></div></div>}
     {requestOpen && <MissingRequestModal onClose={() => setRequestOpen(false)} />}
-    {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} onChanged={() => { loadMeta(); loadPapers(); }} onMaintenanceChanged={setMaintenanceMode} onRequestSettingChanged={setMissingRequestEnabled} onAnnouncementChanged={(enabled, text) => { setAnnouncementEnabled(enabled); setAnnouncementText(text); }} onFeedbackSettingChanged={setFeedbackEnabled} onAiChatSettingChanged={setAiChatEnabled} />}
+    {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} onChanged={() => { loadMeta(); loadPapers(); }} onMaintenanceChanged={setMaintenanceMode} onRequestSettingChanged={setMissingRequestEnabled} onAnnouncementChanged={(enabled, text) => { setAnnouncementEnabled(enabled); setAnnouncementText(text); }} onFeedbackSettingChanged={setFeedbackEnabled} onAiChatSettingChanged={setAiChatEnabled} onSolutionSettingChanged={enabled => { setSolutionEnabled(enabled); loadPapers(); }} />}
   </div>;
 }

@@ -21,6 +21,7 @@ A full-stack question-paper library built with React + Vite, Node.js + Express, 
 - Students can open Paper AI on any paper and ask questions about its content and exam preparation.
 - Each paper allows a maximum of 15 AI questions in total across all users.
 - Admin can show or hide the Paper AI button from the admin panel.
+- Admin can upload an optional PDF/image solution for each paper and show or hide solution viewing and downloading from the admin panel.
 - Files are uploaded to Cloudinary; metadata is stored in MongoDB.
 
 ## Requirements

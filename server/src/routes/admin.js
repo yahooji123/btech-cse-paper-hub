@@ -2,6 +2,7 @@ import { Router } from "express";
 import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
 import multer from "multer";
+import mongoose from "mongoose";
 import Paper from "../models/Paper.js";
 import cloudinary from "../config/cloudinary.js";
 import { requireAdmin } from "../middleware/adminAuth.js";
@@ -13,7 +14,7 @@ import Feedback from "../models/Feedback.js";
 const router = Router();
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
+  limit: 18,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many password attempts. Please wait 15 minutes." },
@@ -21,7 +22,7 @@ const loginLimiter = rateLimit({
 const maxBytes = Math.max(1, Number(process.env.MAX_FILE_SIZE_MB || 20)) * 1024 * 1024;
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: maxBytes, files: 1 },
+  limits: { fileSize: maxBytes, files: 2 },
   fileFilter: (_req, file, cb) => {
     const ok = file.mimetype === "application/pdf" || file.mimetype.startsWith("image/");
     cb(ok ? null : new Error("Only PDF and image files are supported."), ok);
@@ -219,6 +220,25 @@ router.patch("/ai-chat-settings", requireAdmin, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get("/solution-settings", requireAdmin, async (_req, res, next) => {
+  try {
+    const settings = await SiteSettings.findOne({ key: "site" }).select("solutionEnabled").lean();
+    res.json({ solutionEnabled: Boolean(settings?.solutionEnabled) });
+  } catch (err) { next(err); }
+});
+
+router.patch("/solution-settings", requireAdmin, async (req, res, next) => {
+  try {
+    if (typeof req.body?.solutionEnabled !== "boolean") return res.status(400).json({ message: "solutionEnabled must be a boolean." });
+    const settings = await SiteSettings.findOneAndUpdate(
+      { key: "site" },
+      { $set: { solutionEnabled: req.body.solutionEnabled }, $setOnInsert: { key: "site" } },
+      { new: true, upsert: true, runValidators: true }
+    ).select("solutionEnabled").lean();
+    res.json({ solutionEnabled: settings.solutionEnabled });
+  } catch (err) { next(err); }
+});
+
 router.get("/feedback", requireAdmin, async (_req, res, next) => {
   try {
     const feedback = await Feedback.find().sort({ createdAt: -1 }).limit(200).lean();
@@ -261,9 +281,36 @@ function uploadBuffer(buffer, options) {
   });
 }
 
-router.post("/papers", requireAdmin, upload.single("file"), async (req, res, next) => {
+function assetOptions(file, label) {
+  const isPdf = file.mimetype === "application/pdf";
+  return {
+    folder: "btech-cse-paper-hub",
+    resource_type: isPdf ? "raw" : "image",
+    public_id: `${Date.now()}-${label}-${file.originalname.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 70)}${isPdf ? ".pdf" : ""}`,
+    use_filename: false,
+    unique_filename: true,
+    overwrite: false,
+  };
+}
+
+async function uploadAsset(file, label) {
+  const result = await uploadBuffer(file.buffer, assetOptions(file, label));
+  return {
+    fileType: file.mimetype === "application/pdf" ? "pdf" : "image",
+    fileUrl: result.secure_url,
+    publicId: result.public_id,
+    cloudResourceType: result.resource_type,
+    originalName: file.originalname,
+    mimeType: file.mimetype,
+    bytes: result.bytes || file.size,
+  };
+}
+
+router.post("/papers", requireAdmin, upload.fields([{ name: "file", maxCount: 1 }, { name: "solutionFile", maxCount: 1 }]), async (req, res, next) => {
   try {
-    if (!req.file) return res.status(400).json({ message: "Choose a PDF or image file." });
+    const file = req.files?.file?.[0];
+    const solutionFile = req.files?.solutionFile?.[0];
+    if (!file) return res.status(400).json({ message: "Choose a PDF or image file." });
     const { title, subject, subjectCode, examType, academicYear } = req.body;
     if (!title?.trim() || !subject?.trim() || !academicYear?.trim()) {
       return res.status(400).json({ message: "Title, subject, and academic year are required." });
@@ -279,15 +326,8 @@ router.post("/papers", requireAdmin, upload.single("file"), async (req, res, nex
       return res.status(409).json({ message: "This subject paper for the same academic year, exam type, and semester already exists." });
     }
 
-    const isPdf = req.file.mimetype === "application/pdf";
-    const result = await uploadBuffer(req.file.buffer, {
-      folder: "btech-cse-paper-hub",
-      resource_type: isPdf ? "raw" : "image",
-      public_id: `${Date.now()}-${req.file.originalname.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80)}${isPdf ? ".pdf" : ""}`,
-      use_filename: false,
-      unique_filename: true,
-      overwrite: false,
-    });
+    const mainAsset = await uploadAsset(file, "paper");
+    const solutionAsset = solutionFile ? await uploadAsset(solutionFile, "solution") : null;
 
     const paper = await Paper.create({
       title: title.trim(),
@@ -299,15 +339,32 @@ router.post("/papers", requireAdmin, upload.single("file"), async (req, res, nex
       subjectCode: (subjectCode || "").trim(),
       examType,
       academicYear: academicYear.trim(),
-      fileType: isPdf ? "pdf" : "image",
-      fileUrl: result.secure_url,
-      publicId: result.public_id,
-      cloudResourceType: result.resource_type,
-      originalName: req.file.originalname,
-      mimeType: req.file.mimetype,
-      bytes: result.bytes || req.file.size,
+      fileType: mainAsset.fileType,
+      fileUrl: mainAsset.fileUrl,
+      publicId: mainAsset.publicId,
+      cloudResourceType: mainAsset.cloudResourceType,
+      originalName: mainAsset.originalName,
+      mimeType: mainAsset.mimeType,
+      bytes: mainAsset.bytes,
+      ...(solutionAsset ? {
+        solutionFileType: solutionAsset.fileType,
+        solutionFileUrl: solutionAsset.fileUrl,
+        solutionPublicId: solutionAsset.publicId,
+        solutionCloudResourceType: solutionAsset.cloudResourceType,
+        solutionOriginalName: solutionAsset.originalName,
+        solutionMimeType: solutionAsset.mimeType,
+        solutionBytes: solutionAsset.bytes,
+      } : {}),
     });
+
     res.status(201).json({ paper });
+  } catch (err) { next(err); }
+});
+
+router.get("/papers", requireAdmin, async (_req, res, next) => {
+  try {
+    const papers = await Paper.find().sort({ createdAt: -1 }).limit(500).lean();
+    res.json({ papers });
   } catch (err) { next(err); }
 });
 
@@ -329,7 +386,7 @@ router.post("/papers/:id/analyze", requireAdmin, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.patch("/papers/:id", requireAdmin, async (req, res, next) => {
+router.patch("/papers/:id", requireAdmin, upload.fields([{ name: "solutionFile", maxCount: 1 }]), async (req, res, next) => {
   try {
     const allowed = ["title", "semesters", "semester", "subject", "subjectCode", "examType", "academicYear"];
     const updates = {};
@@ -363,8 +420,26 @@ router.patch("/papers/:id", requireAdmin, async (req, res, next) => {
     }
     updates.duplicateKey = duplicateKey;
     updates.titleKey = makeTitleKey(duplicateFields.title);
+    const solutionFile = req.files?.solutionFile?.[0];
+    let solutionAsset;
+    if (solutionFile) solutionAsset = await uploadAsset(solutionFile, "solution");
+    if (solutionAsset) {
+      Object.assign(updates, {
+        solutionFileType: solutionAsset.fileType,
+        solutionFileUrl: solutionAsset.fileUrl,
+        solutionPublicId: solutionAsset.publicId,
+        solutionCloudResourceType: solutionAsset.cloudResourceType,
+        solutionOriginalName: solutionAsset.originalName,
+        solutionMimeType: solutionAsset.mimeType,
+        solutionBytes: solutionAsset.bytes,
+      });
+    } else if (req.body.removeSolution === "true") {
+      Object.assign(updates, { $unset: { solutionFileType: 1, solutionFileUrl: 1, solutionPublicId: 1, solutionCloudResourceType: 1, solutionOriginalName: 1, solutionMimeType: 1, solutionBytes: 1 } });
+    }
     const paper = await Paper.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
     if (!paper) return res.status(404).json({ message: "Paper not found." });
+    if (solutionAsset && currentPaper.solutionPublicId) await cloudinary.uploader.destroy(currentPaper.solutionPublicId, { resource_type: currentPaper.solutionCloudResourceType, invalidate: true });
+    if (req.body.removeSolution === "true" && currentPaper.solutionPublicId) await cloudinary.uploader.destroy(currentPaper.solutionPublicId, { resource_type: currentPaper.solutionCloudResourceType, invalidate: true });
     res.json({ paper });
   } catch (err) { next(err); }
 });
@@ -374,6 +449,7 @@ router.delete("/papers/:id", requireAdmin, async (req, res, next) => {
     const paper = await Paper.findById(req.params.id);
     if (!paper) return res.status(404).json({ message: "Paper not found." });
     await cloudinary.uploader.destroy(paper.publicId, { resource_type: paper.cloudResourceType, invalidate: true });
+    if (paper.solutionPublicId) await cloudinary.uploader.destroy(paper.solutionPublicId, { resource_type: paper.solutionCloudResourceType, invalidate: true });
     await paper.deleteOne();
     res.json({ message: "Paper deleted." });
   } catch (err) { next(err); }
